@@ -1,0 +1,69 @@
+name: Sync upstream
+
+# main 分支只做上游镜像：我们的改动全部落在 feat/* 分支，
+# 所以这里每次 merge 都不会和本地修改冲突。
+#
+# 冲突时无法用 mypanel 通知：my.luqion.cn 由本地路由器 dnsmasq 解析，
+# GitHub Action 在公网访问不到。冲突靠 GitHub 原生邮件（Action 失败 → owner 收信）。
+
+on:
+  schedule:
+    - cron: '0 4 * * *' # 每天 04:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/huaisha1224/Microsoft-Rewards.git
+
+      - name: Fetch upstream
+        run: git fetch --no-tags upstream main
+
+      - name: Merge upstream
+        id: merge
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          before=$(git rev-parse HEAD)
+          if git merge --no-edit upstream/main; then
+            after=$(git rev-parse HEAD)
+            if [ "$before" = "$after" ]; then
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              echo "上游无新提交"
+            else
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+              echo "已合并上游 $before -> $after"
+            fi
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            git merge --abort
+          fi
+
+      - name: Push
+        if: steps.merge.outputs.conflict == 'false' && steps.merge.outputs.changed == 'true'
+        run: git push origin main
+
+      # 冲突时不静默吞掉：让 job 失败，GitHub 会给仓库 owner 发邮件。
+      - name: Fail on conflict
+        if: steps.merge.outputs.conflict == 'true'
+        run: |
+          echo "::error::上游同步冲突，需手动处理（本地 git fetch upstream && git merge upstream/main）"
+          exit 1
