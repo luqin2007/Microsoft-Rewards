@@ -3,6 +3,7 @@ import cluster from 'cluster'
 import fs from 'fs'
 import path from 'path'
 import { sendDiscord } from './Discord'
+import { sendGeneric } from './Generic'
 import { sendNtfy } from './Ntfy'
 import { sendTelegram } from './Telegram'
 import type { MicrosoftRewardsBot } from '../index'
@@ -192,7 +193,8 @@ export class Logger {
         const hasWebhook = Boolean(
             (config.webhook.discord?.enabled && config.webhook.discord.url) ||
             (config.webhook.ntfy?.enabled && config.webhook.ntfy.url) ||
-            (config.webhook.telegram?.enabled && config.webhook.telegram.botToken && config.webhook.telegram.chatId)
+            (config.webhook.telegram?.enabled && config.webhook.telegram.botToken && config.webhook.telegram.chatId) ||
+            (config.webhook.generic?.enabled && config.webhook.generic.url)
         )
         if (!hasWebhook) return
 
@@ -209,6 +211,9 @@ export class Logger {
                 config.webhook.telegram.chatId
             ) {
                 sendTelegram(config.webhook.telegram, cleanMsg, level)
+            }
+            if (config.webhook.generic?.enabled && config.webhook.generic.url) {
+                sendGeneric(config.webhook.generic, cleanMsg, level)
             }
         } else {
             process.send?.({ __ipcLog: { content: cleanMsg, level } })

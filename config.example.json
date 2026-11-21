@@ -101,6 +101,15 @@
             "enabled": false,
             "authFile": ""
         },
+        "generic": {
+            "enabled": false,
+            "url": "",
+            "method": "POST",
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "template": "{\"message\":\"{message}\"}"
+        },
         "ntfy": {
             "enabled": false,
             "url": "",

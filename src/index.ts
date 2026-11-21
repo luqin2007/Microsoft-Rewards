@@ -27,6 +27,7 @@ import { SearchManager } from './functions/activities/search/SearchManager'
 import type { Account } from './interface/Account'
 import HttpClient from './util/Http'
 import { sendDiscord, flushDiscordQueue } from './logging/Discord'
+import { sendGeneric, flushGenericQueue } from './logging/Generic'
 import { sendNtfy, flushNtfyQueue } from './logging/Ntfy'
 import { sendTelegram, flushTelegramQueue } from './logging/Telegram'
 import { sendPushPlus, flushPushPlusQueue } from './logging/PushPlus'
@@ -79,7 +80,8 @@ async function flushAllWebhooks(timeoutMs = 5000): Promise<void> {
         flushTelegramQueue(timeoutMs),
         flushPushPlusQueue(timeoutMs),
         flushServerChanQueue(timeoutMs),
-        flushClawBotQueue(timeoutMs)
+        flushClawBotQueue(timeoutMs),
+        flushGenericQueue(timeoutMs)
     ])
     closeSessionStore()
 }
@@ -351,6 +353,9 @@ export class MicrosoftRewardsBot {
                     if (webhook.telegram?.enabled && webhook.telegram.botToken && webhook.telegram.chatId) {
                         sendTelegram(webhook.telegram, content, level)
                     }
+                    if (webhook.generic?.enabled && webhook.generic.url) {
+                        sendGeneric(webhook.generic, content, level)
+                    }
                 }
             })
         }
@@ -392,6 +397,7 @@ export class MicrosoftRewardsBot {
                 await this.sendPushPlusSummary(allAccountStats, runStartTime, hadWorkerFailure)
                 await this.sendServerChanSummary(allAccountStats, runStartTime, hadWorkerFailure)
                 await this.sendClawBotSummary(allAccountStats, runStartTime, hadWorkerFailure)
+                await this.sendGenericSummary(allAccountStats, runStartTime, hadWorkerFailure)
                 await flushAllWebhooks()
 
                 if (!hadWorkerFailure) markRunSucceeded()
@@ -513,6 +519,20 @@ export class MicrosoftRewardsBot {
 
         const content = this.buildSummaryMessage(accountStats, runStartTime, hadWorkerFailure)
         await sendClawBot(clawbot, content)
+    }
+
+    private async sendGenericSummary(
+        accountStats: AccountStats[],
+        runStartTime: number,
+        hadWorkerFailure: boolean
+    ): Promise<void> {
+        const generic = this.config?.webhook?.generic
+        if (!generic?.enabled || !generic.url) {
+            return
+        }
+
+        const content = this.buildSummaryMessage(accountStats, runStartTime, hadWorkerFailure)
+        await sendGeneric(generic, content, 'info')
     }
 
     private async runTasks(accounts: Account[], runStartTime: number): Promise<AccountStats[]> {
@@ -667,6 +687,7 @@ export class MicrosoftRewardsBot {
             await this.sendPushPlusSummary(accountStats, runStartTime, hadFailure)
             await this.sendServerChanSummary(accountStats, runStartTime, hadFailure)
             await this.sendClawBotSummary(accountStats, runStartTime, hadFailure)
+            await this.sendGenericSummary(accountStats, runStartTime, hadFailure)
             await flushAllWebhooks()
 
             if (!hadFailure) markRunSucceeded()
