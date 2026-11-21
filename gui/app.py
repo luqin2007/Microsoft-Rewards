@@ -1037,9 +1037,60 @@ class App(ctk.CTk):
         if update_checker.is_newer(server, APP_VERSION):
             self._update_info = data
             self._set_status(f'发现新版本 v{server}（当前 v{APP_VERSION}）', ACCENT)
-            self._show_update_dialog(data)
+            if silent:
+                # 决策 2.B：启动自动检查完全静默——只推通知，不弹窗打扰
+                self._notify_update(data)
+            else:
+                # 用户主动点「检查更新」，仍需看到结果与下载入口
+                self._show_update_dialog(data)
         elif not silent:
             self._set_status(f'已是最新版本 v{APP_VERSION}', '#1E8E3E')
+
+    def _get_notify_url(self) -> str:
+        """从 config.json 的 webhook.generic 读取通知地址；读不到就返回空。"""
+        try:
+            cfg = cs.load(CONFIG_PATH, CONFIG_EXAMPLE)
+            webhook = cfg.get('webhook') or {}
+            generic = webhook.get('generic') or {}
+            if generic.get('enabled'):
+                return str(generic.get('url') or '').strip()
+        except Exception:
+            pass
+        # 配置读失败时退回启动时载入的内存副本
+        try:
+            webhook = (self.config_data or {}).get('webhook') or {}
+            generic = webhook.get('generic') or {}
+            if generic.get('enabled'):
+                return str(generic.get('url') or '').strip()
+        except Exception:
+            pass
+        return ''
+
+    def _notify_update(self, info: Dict) -> None:
+        """静默推送更新通知（后台线程，失败只记状态栏，不影响任务）。"""
+        server = str(info.get('Version') or '')
+        url = str(info.get('DownloadUrl') or '').strip()
+        notify_url = self._get_notify_url()
+        if not notify_url:
+            return
+
+        message = (
+            f'# MRS 助手发现新版本\n\n'
+            f'当前版本：v{APP_VERSION}\n'
+            f'最新版本：v{server}\n'
+            f'下载地址：{url}\n\n'
+            f'把新版本放进 mrs-inbox 目录即可自动替换。'
+        )
+
+        def _worker() -> None:
+            ok, error = update_checker.push_notification(message, notify_url)
+            if not ok:
+                try:
+                    self.after(0, lambda: self._set_status(f'更新通知推送失败：{error}', DANGER))
+                except Exception:
+                    pass
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _show_update_dialog(self, info: Dict) -> None:
         """自绘更新提示框；出任何异常都退回原生 messagebox。"""
