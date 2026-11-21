@@ -113,6 +113,10 @@ export interface ConfigWebhook {
     pushplus?: WebhookPushPlusConfig
     serverchan?: WebhookServerChanConfig
     clawbot?: WebhookClawBotConfig
+    /**
+     * 通用 HTTP webhook：可向任意 URL POST 模板渲染后的请求体。
+     */
+    generic?: WebhookGenericConfig
     webhookLogFilter: LogFilter
 }
 
@@ -162,4 +166,17 @@ export interface WebhookServerChanConfig {
 export interface WebhookClawBotConfig {
     enabled?: boolean
     authFile?: string
+}
+
+export interface WebhookGenericConfig {
+    enabled?: boolean
+    url: string
+    method?: 'POST' | 'PUT' | 'PATCH'
+    headers?: Record<string, string>
+    token?: string
+    /**
+     * 请求体模板，占位符：{message} / {level} / {timestamp}
+     * 默认 '{"message":"{message}"}'
+     */
+    template?: string
 }
