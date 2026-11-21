@@ -382,6 +382,43 @@ const requestHandler = async (req, res) => {
             return sendJson(res, 200, pm.getStatus())
         }
 
+        // gui status: GUI 启动的 node 进程状态
+        // processManager 只记录自己 spawn 的子进程，看不到 GUI 里点「开始」起来的任务；
+        // GUI 用 runner.py 把状态原子写到 run-state.json，这里只读并交叉校验进程存活。
+        if (method === 'GET' && pathname === '/gui-status') {
+            const statePath = path.join(projectRoot, 'run-state.json')
+            try {
+                const raw = fs.readFileSync(statePath, 'utf8')
+                const state = JSON.parse(raw)
+                let alive = false
+                if (state.pid) {
+                    try {
+                        process.kill(state.pid, 0)
+                        alive = true
+                    } catch {
+                        alive = false
+                    }
+                }
+                const ageMs = Date.now() - fs.statSync(statePath).mtimeMs
+                return sendJson(res, 200, {
+                    ...state,
+                    alive,
+                    source: 'gui-run-state',
+                    stateFileAgeMs: ageMs
+                })
+            } catch (err) {
+                return sendJson(res, 200, {
+                    state: 'unknown',
+                    alive: false,
+                    source: 'gui-run-state',
+                    error:
+                        err.code === 'ENOENT'
+                            ? 'run-state.json 不存在（GUI 尚未启动过任务）'
+                            : String(err.message)
+                })
+            }
+        }
+
         // point read live
         if (method === 'GET' && pathname === '/points') {
             return sendJson(res, 200, pm.getPoints())

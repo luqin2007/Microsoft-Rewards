@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
 import sys
 import threading
+from datetime import datetime, timezone
 from typing import Callable, Dict, Optional
 
 NODE_NAME = 'node.exe' if os.name == 'nt' else 'bin/node'
@@ -20,6 +22,25 @@ ANSI_RE = re.compile(r'\x1b\[[0-9;?]*[ -/]*[@-~]')
 BALANCE_RE = re.compile(r'currentBalance=(\d+)')
 GAIN_RE = re.compile(r'pointsGained=(\d+)')
 EMAIL_RE = re.compile(r'[\w.+-]+@[\w-]+\.[\w.-]+')
+
+# GUI 与外部只读 API 之间的状态约定：GUI 是唯一写入方，API 只读。
+STATE_NAME = 'run-state.json'
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _write_state(payload: Dict) -> None:
+    """原子写 run-state.json；任何失败都静默，绝不阻塞任务。"""
+    try:
+        path = os.path.join(app_root(), STATE_NAME)
+        tmp = path + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as fh:
+            json.dump(payload, fh, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+    except Exception:  # noqa: BLE001 - 状态文件写失败不能影响运行
+        pass
 
 
 def strip_ansi(text: str) -> str:
@@ -80,6 +101,16 @@ class BotRunner:
             bufsize=1,
             creationflags=_NO_WINDOW,
         )
+        _write_state(
+            {
+                'state': 'running',
+                'pid': self.proc.pid,
+                'startedAt': _utc_now(),
+                'entry': entry,
+                'nodeExe': node_exe,
+                'cwd': cwd,
+            }
+        )
         self._thread = threading.Thread(target=self._pump, daemon=True)
         self._thread.start()
 
@@ -99,6 +130,14 @@ class BotRunner:
             except Exception:
                 pass
         code = proc.wait()
+        _write_state(
+            {
+                'state': 'idle',
+                'pid': None,
+                'startedAt': None,
+                'lastExit': {'code': code, 'at': _utc_now()},
+            }
+        )
         if self.on_exit:
             self.on_exit(code)
 
