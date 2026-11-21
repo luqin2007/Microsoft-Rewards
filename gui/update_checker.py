@@ -83,6 +83,38 @@ def fetch_latest(
         return None, f'{type(exc).__name__}: {exc}'
 
 
+# --------------------------------------------------------------- 通用 webhook 推送
+def push_notification(message: str, url: str, timeout: float = 8.0) -> Tuple[bool, Optional[str]]:
+    """向通用 webhook 端点推送一条文本消息。
+
+    mypanel 等端点的约定是 ``POST {"message": "..."}``。返回 ``(成功, 错误原因)``，
+    **不抛异常**，可直接在后台线程里调用。任何网络失败都不应影响 GUI 主流程。
+    """
+    if not url:
+        return False, '未配置通知地址'
+
+    try:
+        from urllib.error import HTTPError, URLError
+        from urllib.request import Request, urlopen
+
+        body = json.dumps({'message': message}, ensure_ascii=False).encode('utf-8')
+        req = Request(
+            url,
+            data=body,
+            headers={'Content-Type': 'application/json', 'User-Agent': 'MRS-Client/1.0'},
+            method='POST',
+        )
+        with urlopen(req, timeout=timeout) as resp:
+            ok = 200 <= resp.status < 300
+            return ok, None if ok else f'HTTP {resp.status}'
+    except HTTPError as exc:
+        return False, f'HTTP {exc.code}'
+    except URLError as exc:
+        return False, f'网络不可用（{exc.reason}）'
+    except Exception as exc:  # 兜底，绝不把异常抛给 GUI
+        return False, f'{type(exc).__name__}: {exc}'
+
+
 # --------------------------------------------------------------- 独立工具用的便捷入口
 def check_updates(tool_name: str, local_version: str) -> None:
     """老接口：请求接口 → 有新版本就提示并打开下载页。
