@@ -50,13 +50,15 @@ class Browser {
 
     async createBrowser(account: Account): Promise<BrowserCreationResult> {
         const headless = this.bot.config.headless
-        const channel = this.bot.config.browserChannel ?? 'chromium'
+        const requestedChannel = this.bot.config.browserChannel ?? 'chromium'
+        // 实际生效的通道：msedge 启动失败时会自动回退，下面几个变量必须跟着变
+        let channel: string = requestedChannel
         // 真实 Edge 依赖系统安装；linux（docker）环境通常没有，回退内置补丁版 Chromium
-        const useRealEdge = channel === 'msedge' && process.platform !== 'linux'
+        let useRealEdge = channel === 'msedge' && process.platform !== 'linux'
         // 系统 Chrome 同理：直接复用用户机器上已装的正版 Chrome，免去下载内置 Chromium
-        const useRealChrome = channel === 'chrome' && process.platform !== 'linux'
+        let useRealChrome = channel === 'chrome' && process.platform !== 'linux'
         // 二者都是"系统真实浏览器"，共用原生指纹路径（不做合成指纹注入）
-        const useSystemBrowser = useRealEdge || useRealChrome
+        let useSystemBrowser = useRealEdge || useRealChrome
 
         const hasProxy = Boolean(account.proxy.url)
         const ignoreCertificateErrors = hasProxy && this.bot.config.proxy.ignoreCertificateErrors
@@ -108,31 +110,81 @@ class Browser {
                 this.bot.logger.warn(
                     this.bot.isMobile,
                     'BROWSER',
-                    'browserChannel=msedge 为实验性选项：当前 Edge/playwright 版本组合在访问 rewards.bing.com 时可能崩溃（上游 #41438），如遇失败请改回 chromium'
+                    'browserChannel=msedge 为实验性选项：用系统 Edge 前需完全退出 Edge（只关窗口不够，启动加速会留后台进程，需在任务管理器结束所有 msedge.exe）；当前 Edge/playwright 版本组合访问 rewards.bing.com 时也可能崩溃（上游 #41438）。若启动失败会自动回退到系统 Chrome / 内置 Chromium，也可直接把浏览器改成 chrome'
                 )
             }
 
-            this.bot.logger.info(
-                this.bot.isMobile,
-                'BROWSER',
-                useSystemBrowser
-                    ? `正在启动系统浏览器 (channel=${useRealChrome ? 'chrome' : 'msedge'}) | headless=${headless} | platform=${process.platform} | proxy=${hasProxy ? 'yes' : 'no'} | tls=${ignoreCertificateErrors ? 'verification-disabled' : 'verified'}`
-                    : `正在启动内置的补丁版 Chromium (Edge UA) | headless=${headless} | platform=${process.platform} | proxy=${hasProxy ? 'yes' : 'no'} | tls=${ignoreCertificateErrors ? 'verification-disabled' : 'verified'} | sandbox=${sandboxDisabled ? 'disabled-root' : 'enabled'}`
-            )
+            const candidates =
+                channel === 'msedge'
+                    ? process.platform === 'linux'
+                        ? ['chromium']
+                        : ['msedge', 'chrome', 'chromium']
+                    : [channel]
 
-            browser = await rebrowser.chromium.launch({
-                headless,
-                ...(useRealChrome && { channel: 'chrome' as const }),
-                ...(useRealEdge && { channel: 'msedge' as const }),
-                ...(proxyConfig && { proxy: proxyConfig }),
-                args: [...Browser.BROWSER_ARGS, ...sandboxArgs, ...certArgs]
-            })
+            const launchWithFallback = async (): Promise<{ browser: rebrowser.Browser; channel: string }> => {
+                let lastError: unknown
+                for (const candidate of candidates) {
+                    const realChrome = candidate === 'chrome' && process.platform !== 'linux'
+                    const realEdge = candidate === 'msedge' && process.platform !== 'linux'
+                    const systemBrowser = realChrome || realEdge
+
+                    this.bot.logger.info(
+                        this.bot.isMobile,
+                        'BROWSER',
+                        systemBrowser
+                            ? `正在启动系统浏览器 (channel=${candidate}) | headless=${headless} | platform=${process.platform} | proxy=${hasProxy ? 'yes' : 'no'} | tls=${ignoreCertificateErrors ? 'verification-disabled' : 'verified'}`
+                            : `正在启动内置的补丁版 Chromium (Edge UA) | headless=${headless} | platform=${process.platform} | proxy=${hasProxy ? 'yes' : 'no'} | tls=${ignoreCertificateErrors ? 'verification-disabled' : 'verified'} | sandbox=${sandboxDisabled ? 'disabled-root' : 'enabled'}`
+                    )
+
+                    try {
+                        const launched = await rebrowser.chromium.launch({
+                            headless,
+                            ...(realChrome && { channel: 'chrome' as const }),
+                            ...(realEdge && { channel: 'msedge' as const }),
+                            ...(proxyConfig && { proxy: proxyConfig }),
+                            args: [...Browser.BROWSER_ARGS, ...sandboxArgs, ...certArgs]
+                        })
+
+                        if (candidate !== requestedChannel) {
+                            // 回退已经成功，任务照常运行；用 INFO 记录即可。
+                            this.bot.logger.info(
+                                this.bot.isMobile,
+                                'BROWSER',
+                                `browserChannel=${requestedChannel} 启动失败（通常是 Edge 启动加速后台进程占用），已自动回退到 ${candidate}。想用回系统 Edge：在任务管理器结束所有 msedge.exe，或在 Edge 设置 → 系统和性能关闭「启动加速」；否则建议直接把浏览器改成 ${candidate}。`
+                            )
+                        }
+
+                        return { browser: launched, channel: candidate }
+                    } catch (error) {
+                        lastError = error
+                        const reason = error instanceof Error ? (error.message.split('\n')[0] ?? error.message) : String(error)
+                        if (candidate !== candidates[candidates.length - 1]) {
+                            // 还有下一个候选，属于重试中；全部失败时下面会报 ERROR。
+                            this.bot.logger.debug(
+                                this.bot.isMobile,
+                                'BROWSER',
+                                `${candidate} 启动失败（${reason.slice(0, 160)}），准备尝试下一个浏览器`
+                            )
+                        }
+                    }
+                }
+
+                throw lastError
+            }
+
+            const launched = await launchWithFallback()
+            browser = launched.browser
+            channel = launched.channel
+            useRealEdge = channel === 'msedge' && process.platform !== 'linux'
+            useRealChrome = channel === 'chrome' && process.platform !== 'linux'
+            useSystemBrowser = useRealEdge || useRealChrome
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error)
-            const hint =
-                useRealChrome && /not found|Executable doesn't exist|cannot find/i.test(errorMessage)
-                    ? '（未检测到系统 Google Chrome：请安装 Chrome，或把 config.json 的 browserChannel 改回 chromium）'
-                    : ''
+            const hint = /Target page, context or browser has been closed|正在现有浏览器会话中打开/i.test(errorMessage)
+                ? '（系统 Edge 的启动请求被已有实例接管：Edge 输出「正在现有浏览器会话中打开。」后自行退出。最常见原因是 Edge「启动加速」——关掉所有窗口后仍留一个 msedge.exe 后台进程占着配置目录。解决：Edge 设置 → 系统和性能 → 关闭「启动加速」和「关闭 Edge 后继续运行后台应用」，再到任务管理器结束所有 msedge.exe；脚本已自动回退，也可直接把浏览器改成 chrome）'
+                : useRealChrome && /not found|Executable doesn't exist|cannot find/i.test(errorMessage)
+                  ? '（未检测到系统 Google Chrome：请安装 Chrome，或把 config.json 的 browserChannel 改回 chromium）'
+                  : ''
             this.bot.logger.error(this.bot.isMobile, 'BROWSER', `浏览器启动失败: ${errorMessage}${hint}`)
             throw error
         }
@@ -252,7 +304,9 @@ class Browser {
                     this.bot.logger.error(this.bot.isMobile, 'BROWSER', `渲染器崩溃 | ${p.url()}`)
                 )
             })
-            context.on('close', () => this.bot.logger.warn(this.bot.isMobile, 'BROWSER', '浏览器上下文已关闭'))
+            // 正常收尾（closeBrowser）也会触发 close 事件，不是故障；降为 DEBUG，
+            // 真出错时后续操作会抛错并报 ERROR，不会被这条无害提示掩盖。
+            context.on('close', () => this.bot.logger.debug(this.bot.isMobile, 'BROWSER', '浏览器上下文已关闭'))
 
             context.setDefaultTimeout(this.bot.utils.stringToNumber(this.bot.config?.globalTimeout ?? 30000))
 

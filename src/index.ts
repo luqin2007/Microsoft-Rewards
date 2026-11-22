@@ -375,11 +375,13 @@ export class MicrosoftRewardsBot {
                 hadWorkerFailure = true
             }
 
-            this.logger.warn(
-                'main',
-                'CLUSTER-WORKER-EXIT',
-                `worker ${pid} 退出 | 代码: ${code ?? 'n/a'} | 信号: ${signal ?? 'n/a'} | 活跃worker数: ${this.activeWorkers}`
-            )
+            // 正常退出（code=0 且无信号）只是 worker 收尾，不该报警；失败仍用 WARN。
+            const exitMessage = `worker ${pid} 退出 | 代码: ${code ?? 'n/a'} | 信号: ${signal ?? 'n/a'} | 活跃worker数: ${this.activeWorkers}`
+            if (failed) {
+                this.logger.warn('main', 'CLUSTER-WORKER-EXIT', exitMessage)
+            } else {
+                this.logger.debug('main', 'CLUSTER-WORKER-EXIT', exitMessage)
+            }
 
             if (this.activeWorkers <= 0) {
                 const totalCollectedPoints = allAccountStats.reduce((sum, s) => sum + s.collectedPoints, 0)
@@ -390,8 +392,8 @@ export class MicrosoftRewardsBot {
                 this.logger.info(
                     'main',
                     'RUN-END',
-                    `全部账户完成 | 处理账户数=${allAccountStats.length} | 获得积分=${totalCollectedPoints} | 原余额=${totalInitialPoints} | 现余额=${totalFinalPoints} | 运行分钟数=${totalDurationMinutes}`,
-                    'green'
+                    `${hadWorkerFailure ? '运行结束（存在失败的 worker）' : '全部账户完成'} | 处理账户数=${allAccountStats.length} | 获得积分=${totalCollectedPoints} | 原余额=${totalInitialPoints} | 现余额=${totalFinalPoints} | 运行分钟数=${totalDurationMinutes}`,
+                    hadWorkerFailure ? 'red' : 'green'
                 )
 
                 await this.sendPushPlusSummary(allAccountStats, runStartTime, hadWorkerFailure)
@@ -411,7 +413,8 @@ export class MicrosoftRewardsBot {
 
         cluster.on('disconnect', worker => {
             const pid = worker.process?.pid
-            this.logger.warn('main', 'CLUSTER-WORKER-DISCONNECT', `worker ${pid ?? '?'} 已断开连接`)
+            // 正常退出前也会先 disconnect，失败由 exit 事件用 WARN 报告。
+            this.logger.debug('main', 'CLUSTER-WORKER-DISCONNECT', `worker ${pid ?? '?'} 已断开连接`)
         })
     }
 
@@ -671,6 +674,7 @@ export class MicrosoftRewardsBot {
         }
 
         if (this.config.clusters <= 1 && cluster.isPrimary) {
+            const hadFailure = accountStats.some(s => !s.success)
             const totalCollectedPoints = accountStats.reduce((sum, s) => sum + s.collectedPoints, 0)
             const totalInitialPoints = accountStats.reduce((sum, s) => sum + s.initialPoints, 0)
             const totalFinalPoints = accountStats.reduce((sum, s) => sum + s.finalPoints, 0)
@@ -679,11 +683,10 @@ export class MicrosoftRewardsBot {
             this.logger.info(
                 'main',
                 'RUN-END',
-                `全部账户完成 | 处理账户数=${accountStats.length} | 获得积分=${totalCollectedPoints} | 原余额=${totalInitialPoints} | 现余额=${totalFinalPoints} | 运行分钟数=${totalDurationMinutes}`,
-                'green'
+                `${hadFailure ? '运行结束（存在失败账户）' : '全部账户完成'} | 处理账户数=${accountStats.length} | 失败账户数=${accountStats.filter(s => !s.success).length} | 获得积分=${totalCollectedPoints} | 原余额=${totalInitialPoints} | 现余额=${totalFinalPoints} | 运行分钟数=${totalDurationMinutes}`,
+                hadFailure ? 'red' : 'green'
             )
 
-            const hadFailure = accountStats.some(s => !s.success)
             await this.sendPushPlusSummary(accountStats, runStartTime, hadFailure)
             await this.sendServerChanSummary(accountStats, runStartTime, hadFailure)
             await this.sendClawBotSummary(accountStats, runStartTime, hadFailure)
@@ -691,7 +694,7 @@ export class MicrosoftRewardsBot {
             await flushAllWebhooks()
 
             if (!hadFailure) markRunSucceeded()
-            process.exit(0)
+            process.exit(hadFailure ? 1 : 0)
         }
 
         return accountStats
@@ -833,7 +836,8 @@ export class MicrosoftRewardsBot {
                             '桌面会话预热完成 | 后续桌面阶段将直接复用已保存会话'
                         )
                     } catch (error) {
-                        this.logger.warn(
+                        // 预热失败会在桌面阶段重新登录，不影响整体流程。
+                        this.logger.info(
                             'main',
                             'FLOW',
                             `桌面会话预热失败，将在桌面阶段重试登录 | 原因=${
@@ -890,7 +894,7 @@ export class MicrosoftRewardsBot {
                     if (profileCountry) {
                         saveResolvedRegion(this.config.sessionPath, accountEmail, profileCountry)
                     } else {
-                        this.logger.warn(
+                        this.logger.debug(
                             'main',
                             'GEO-LOCALE',
                             `Microsoft 个人资料返回了无效的国家/地区；保留 ${
@@ -913,7 +917,7 @@ export class MicrosoftRewardsBot {
                     try {
                         appData = await this.browser.func.getAppDashboardData()
                     } catch (error) {
-                        this.logger.warn(
+                        this.logger.info(
                             'main',
                             'LOGIN-APP',
                             `App 仪表板不可用 - 本次运行将跳过 App 活动 | 信息=${error instanceof Error ? error.message : String(error)}`
@@ -933,7 +937,7 @@ export class MicrosoftRewardsBot {
                     try {
                         appEarnable = await this.browser.func.getAppEarnablePoints()
                     } catch (error) {
-                        this.logger.warn(
+                        this.logger.info(
                             'main',
                             'LOGIN-APP',
                             `App 可赚积分查询失败 - 本次运行将跳过 App 活动 | 信息=${error instanceof Error ? error.message : String(error)}`
@@ -952,6 +956,29 @@ export class MicrosoftRewardsBot {
                         browserEarnable.desktopSearchPoints
                     } | App: ${appEarnable?.totalEarnablePoints ?? 0} | ${accountEmail} | locale: ${this.accountLocale.locale}`
                 )
+
+                // App 类任务（阅读 / App 签到 / App 推广）都挂在 appAvailable 上，
+                // 拿不到 accessToken 或 appData 就整组静默跳过。这里明确记一行，
+                // 否则用户只会看到「阅读任务没做」却查不到原因。
+                if (this.config.workers.doReadToEarn || this.config.workers.doDailyCheckIn) {
+                    if (appAvailable) {
+                        this.logger.debug(
+                            'main',
+                            'APP-TASKS',
+                            `App 类任务可用 | accessToken=有 | appData=有 | 账户: ${accountEmail}`
+                        )
+                    } else {
+                        this.logger.info(
+                            'main',
+                            'APP-TASKS',
+                            `App 类任务跳过 | accessToken=${this.accessToken ? '有' : '无'} | appData=${
+                                appData ? '有' : '无'
+                            } | 受影响的开关：阅读任务=${this.config.workers.doReadToEarn ? '开' : '关'}、App签到=${
+                                this.config.workers.doDailyCheckIn ? '开' : '关'
+                            } | 账户: ${accountEmail}`
+                        )
+                    }
+                }
 
                 const parallel = this.config.searchSettings.parallelSearching
                 const doBonus = this.config.workers.doBonusSearches
@@ -1214,12 +1241,12 @@ async function main(): Promise<void> {
         void flushAllWebhooks()
     })
     process.on('SIGINT', async () => {
-        rewardsBot.logger.warn('main', 'PROCESS', '收到 SIGINT 信号，正在刷新并退出...')
+        rewardsBot.logger.info('main', 'PROCESS', '收到 SIGINT 信号，正在刷新并退出...')
         await flushAllWebhooks()
         process.exit(130)
     })
     process.on('SIGTERM', async () => {
-        rewardsBot.logger.warn('main', 'PROCESS', '收到 SIGTERM 信号，正在刷新并退出...')
+        rewardsBot.logger.info('main', 'PROCESS', '收到 SIGTERM 信号，正在刷新并退出...')
         await flushAllWebhooks()
         process.exit(143)
     })

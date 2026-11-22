@@ -668,13 +668,14 @@ export class QueryCore {
                         `获取 ${source} 成功 | 数量=${result.length} | 累计=${titles.size}`
                     )
                 } else {
-                    this.bot.logger.warn(this.bot.isMobile, 'SEARCH-CHINA-TRENDS', `${source} 返回空列表`)
+                    // 单个源空列表是常见情况，后面还有备用源；全部失败时下面会单独提示。
+                    this.bot.logger.debug(this.bot.isMobile, 'SEARCH-CHINA-TRENDS', `${source} 返回空列表`)
                     failedSources.push(source)
                 }
             } catch (error) {
                 failedSources.push(source)
                 if (error instanceof ChinaApiRateLimitError) backoffMultiplier *= 1.5
-                this.bot.logger.warn(
+                this.bot.logger.debug(
                     this.bot.isMobile,
                     'SEARCH-CHINA-TRENDS',
                     `${source} 请求失败 | 错误=${error instanceof Error ? error.message : String(error)}`
@@ -684,7 +685,8 @@ export class QueryCore {
 
         // 如果首选源全部失败，逐个 fallback 直到拿到数据
         if (titles.size === 0 && fallback.length) {
-            this.bot.logger.warn(
+            // 换源是设计好的正常路径，不是故障；成功与否看下面的「获取完成」或「全部失败」。
+            this.bot.logger.info(
                 this.bot.isMobile,
                 'SEARCH-CHINA-TRENDS',
                 `首选源全部失败（${failedSources.join(', ')}），尝试备用源 ${fallback.join(', ')}`
@@ -708,7 +710,7 @@ export class QueryCore {
                     }
                 } catch (error) {
                     if (error instanceof ChinaApiRateLimitError) backoffMultiplier *= 1.5
-                    this.bot.logger.warn(
+                    this.bot.logger.debug(
                         this.bot.isMobile,
                         'SEARCH-CHINA-TRENDS',
                         `备用源 ${source} 也失败 | 错误=${error instanceof Error ? error.message : String(error)}`

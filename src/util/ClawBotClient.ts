@@ -2,7 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import { randomBytes } from 'crypto'
 import { httpRequest } from './Http'
-import { getProjectRoot } from './Load'
+import { resolveDataItem } from './UserData'
 
 // 微信 ClawBot 推送：直连腾讯 iLink 官方灰度接口。
 // 请求结构与登录流程对照 @tencent-weixin/openclaw-weixin 2.4.x 插件源码实现（MIT）。
@@ -33,7 +33,8 @@ export type ClawBotSendResult = 'ok' | 'expired' | 'needs-activation' | 'error'
 
 export function resolveClawBotAuthFile(customPath?: string): string {
     if (customPath) return path.resolve(customPath)
-    return path.join(getProjectRoot(), 'clawbot-auth.json')
+    // 推送凭据和 .env 一样属于用户资产：放 %LOCALAPPDATA%\MRS助手，换版本不丢
+    return resolveDataItem('clawbot-auth.json')
 }
 
 export function loadClawBotAuth(customPath?: string): ClawBotAuth | null {

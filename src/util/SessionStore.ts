@@ -5,6 +5,8 @@ import path from 'node:path'
 import type { BrowserContext } from 'patchright'
 import type { BrowserFingerprintWithHeaders } from 'fingerprint-generator'
 
+import { sessionsDir } from './UserData'
+
 export type StorageState = Awaited<ReturnType<BrowserContext['storageState']>>
 
 export interface LoadedSession {
@@ -45,7 +47,9 @@ function removeExpiredCookies(storageState: StorageState): {
 function getDb(sessionPath: string): DatabaseSync {
     if (db) return db
 
-    const dir = path.resolve(process.cwd(), sessionPath)
+    // sessions 属于用户数据：放在 %LOCALAPPDATA%\MRS助手\sessions，
+    // 换版本后 Cookie 还在，多数情况连登录都不用走（见 UserData.ts）
+    const dir = sessionsDir(sessionPath)
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
     try {
         fs.chmodSync(dir, 0o700)

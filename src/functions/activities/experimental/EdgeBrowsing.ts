@@ -188,7 +188,9 @@ export class EdgeBrowsing extends BaseActivity {
                     ` | elapsedMinutes=${afterReport.elapsedMinutes}` +
                     ` | estimatedRemainingMinutes=${afterReport.estimatedRemainingMinutes}`
 
-                if (result.duplicate) this.bot.logger.warn(this.bot.isMobile, LOG_TAG, message)
+                // 重复提交说明服务器已经收过这条，等同成功，不是警告。
+                if (result.duplicate)
+                    this.bot.logger.debug(this.bot.isMobile, LOG_TAG, message)
                 else this.bot.logger.info(this.bot.isMobile, LOG_TAG, message, 'green')
 
                 serverComplete = await this.refreshServerCompletion(accessToken, reportNumber, reportCount)
@@ -675,7 +677,7 @@ export class EdgeBrowsing extends BaseActivity {
         const reportIntervalMinutes = validInterval ? advertisedInterval : DEFAULT_REPORT_INTERVAL_MINUTES
 
         if (!validInterval) {
-            this.bot.logger.warn(
+            this.bot.logger.debug(
                 this.bot.isMobile,
                 LOG_TAG,
                 `服务器上报间隔无效，使用回退值 | received=${

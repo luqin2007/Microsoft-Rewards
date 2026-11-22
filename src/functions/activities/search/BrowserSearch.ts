@@ -110,7 +110,7 @@ export class Search extends BaseActivity {
             while (!tracker.done() && stats.performed < tracker.maxSearches && stats.stagnant < tracker.stagnantLimit) {
                 const query = await queryQueue.next()
                 if (!query) {
-                    this.bot.logger.warn(isMobile, tracker.context, '查询队列已耗尽，停止')
+                    this.bot.logger.debug(isMobile, tracker.context, '查询队列已耗尽，停止')
                     break
                 }
 
@@ -192,12 +192,13 @@ export class Search extends BaseActivity {
 
                 return
             } catch (error) {
-                this.bot.logger.warn(
-                    isMobile,
-                    'SEARCH-BING',
-                    `搜索尝试 ${attempt}/${MAX_QUERY_ATTEMPTS} 失败 | 查询="${query}" | ${error instanceof Error ? error.message : String(error)}`
-                )
-                if (attempt === MAX_QUERY_ATTEMPTS) throw error
+                const message = `搜索尝试 ${attempt}/${MAX_QUERY_ATTEMPTS} 失败 | 查询="${query}" | ${error instanceof Error ? error.message : String(error)}`
+                if (attempt === MAX_QUERY_ATTEMPTS) {
+                    // 重试已耗尽，这次才是真失败。
+                    this.bot.logger.warn(isMobile, 'SEARCH-BING', `${message}（重试已耗尽）`)
+                    throw error
+                }
+                this.bot.logger.debug(isMobile, 'SEARCH-BING', `${message}（重试中）`)
                 await this.bot.utils.wait(2000)
             }
         }

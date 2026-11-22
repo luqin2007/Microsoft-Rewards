@@ -1,6 +1,8 @@
 import fs from 'fs'
 import path from 'path'
 
+import { resolveDataItem } from './UserData'
+
 export interface SyncReport {
     configPath: string
     examplePath: string
@@ -31,7 +33,11 @@ function resolveProjectFile(filename: string, projectRoot: string): string | und
 }
 
 export function resolveConfigPath(projectRoot: string = getProjectRoot()): string {
-    return resolveProjectFile('config.json', projectRoot) ?? path.join(projectRoot, 'config.json')
+    // config.json 属于用户数据，和 GUI 写的是同一份（%LOCALAPPDATA%\MRS助手）。
+    // 若仍按项目根找，GUI 改了设置脚本读不到 → 用户体感「开关无效」。
+    const inData = resolveDataItem('config.json')
+    if (fs.existsSync(inData)) return inData
+    return resolveProjectFile('config.json', projectRoot) ?? inData
 }
 
 export function resolveExamplePath(projectRoot: string = getProjectRoot()): string {

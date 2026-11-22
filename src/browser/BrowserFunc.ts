@@ -59,7 +59,9 @@ export default class BrowserFunc {
                 } catch (error) {
                     primaryError = error
                     if (attempt === 1) {
-                        this.bot.logger.warn(
+                        // 主接口偶尔不返回 dashboard 字段，重试 / 兜底是正常路径，不是故障。
+                        // 降到 debug 避免普通用户看到「请求失败」以为账号出问题；排查时开调试日志仍可看到。
+                        this.bot.logger.debug(
                             this.bot.isMobile,
                             'GET-DASHBOARD-DATA',
                             `主接口请求失败，正在重试一次 | 信息=${this.errorMessage(error)}`
@@ -70,7 +72,7 @@ export default class BrowserFunc {
             }
 
             this.useFlyoutDashboardFallback = true
-            this.bot.logger.warn(
+            this.bot.logger.debug(
                 this.bot.isMobile,
                 'GET-DASHBOARD-DATA',
                 `重试后主接口仍不可用，改用 Bing flyout 兜底 | 信息=${this.errorMessage(primaryError)}`
@@ -101,7 +103,9 @@ export default class BrowserFunc {
             await this.applyResponseCookies(URLs.bing.rewardsFlyoutUserInfo, response.headers['set-cookie'])
 
             const detection = detectFlyoutBotWarning(response.data)
-            this.bot.logger.warn(
+            // 兜底成功也是正常状态，降到 debug。真正的风控由 logBotDetectionMetrics()
+            // 在 userWarnings 非空时单独报 WARN，不会被这条降级提示掩盖。
+            this.bot.logger.debug(
                 this.bot.isMobile,
                 'GET-DASHBOARD-DATA',
                 `使用 Bing flyout 部分仪表板 | 疑似受限=${detection.likelyLimited} | bot标记=${detection.hasBotProfileMarkers} | 活动折叠=${detection.hasCollapsedActivities}`
@@ -305,7 +309,7 @@ export default class BrowserFunc {
     async bootstrap(page: Page): Promise<void> {
         try {
             // /earn is the offers page
-            await page.goto(URLs.rewards.earn, { waitUntil: 'domcontentloaded' })
+            await this.gotoRewardsPage(page, URLs.rewards.earn, '/earn')
 
             // first-time welcome modal blocks the dashboard from rendering
             await this.dismissRewardsWelcomeDialog(page)
@@ -331,8 +335,20 @@ export default class BrowserFunc {
 
             const dashboardRendered = /<section\b[^>]*\bid=["']dailyset["']/i.test(sources.join('\n'))
             if (!dashboardRendered) {
-                throw new Error(
-                    'Rewards dashboard did not render (no section#dailyset) - likely a login/redirect issue, aborting'
+                // 上游在这里无条件中止，理由是"登录/重定向问题"。但实测另一种场景：
+                // apiRequestContext 拉 /dashboard HTML 被网络层 RST（非浏览器 TLS 指纹），
+                // 而 /earn 的 DOM 已正常解析出 offers —— 登录态是好的，不该被误杀。
+                // 因此只有连 offers 都解析不到（页面确实是登录页/空白页）时才中止。
+                if (!this.bot.reactSnapshot.offers.length) {
+                    throw new Error(
+                        'Rewards dashboard did not render (no section#dailyset) - likely a login/redirect issue, aborting'
+                    )
+                }
+                // 已确认 offers 正常，只是 HTML 结构变化，继续运行即可。
+                this.bot.logger.debug(
+                    this.bot.isMobile,
+                    'BOOTSTRAP',
+                    `HTML 中未发现 section#dailyset，但已解析到 ${this.bot.reactSnapshot.offers.length} 个活动，判定为登录态正常，继续运行`
                 )
             }
 
@@ -375,6 +391,47 @@ export default class BrowserFunc {
     }
 
     /**
+     * 打开 Rewards 页面并带重试。
+     *
+     * 实测 page.goto 偶发 net::ERR_ABORTED（通常 400ms 内就被中断，不是超时）：
+     * 多出现在登录/跳转链刚结束、站点自己又发起一次客户端跳转的时候，
+     * 我们的导航被顶掉。这一类是瞬时错误，重试基本都能成功，
+     * 不该让整个账户流程直接失败（2026-11-09 实测过一次）。
+     */
+    private async gotoRewardsPage(page: Page, url: string, label: string, attempts = 3): Promise<void> {
+        let lastError: unknown = null
+        for (let attempt = 1; attempt <= attempts; attempt++) {
+            try {
+                await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 })
+                return
+            } catch (error) {
+                lastError = error
+                const message = error instanceof Error ? error.message : String(error)
+                // 导航被打断，但站点自己已经把我们带到目标地址 —— 视为成功
+                if (page.url().startsWith(url)) {
+                    this.bot.logger.debug(
+                        this.bot.isMobile,
+                        'BOOTSTRAP',
+                        `${label} 导航被中断，但页面已在目标地址，继续 | ${message}`
+                    )
+                    return
+                }
+                const transient = /ERR_ABORTED|ERR_NETWORK|ERR_CONNECTION|ERR_EMPTY_RESPONSE|ERR_TIMED_OUT|Timeout/i.test(message)
+                if (!transient || attempt === attempts) break
+                const delay = 2000 * attempt
+                // 瞬时导航错误会自动重试；重试耗尽后由外层统一报错。
+                this.bot.logger.debug(
+                    this.bot.isMobile,
+                    'BOOTSTRAP',
+                    `${label} 打开失败（第 ${attempt}/${attempts} 次），${delay}ms 后重试 | 当前页=${page.url()} | ${message}`
+                )
+                await new Promise((resolve) => setTimeout(resolve, delay))
+            }
+        }
+        throw lastError instanceof Error ? lastError : new Error(String(lastError))
+    }
+
+    /**
      * Dismisses the first-time welcome modal on /earn, which otherwise
      * prevents section#dailyset from rendering.
      */
@@ -403,19 +460,56 @@ export default class BrowserFunc {
             const res = await page.request.get(url, { timeout: 20000 })
             if (res.ok()) return await res.text()
 
-            this.bot.logger.warn(
+            // 下面一定会改用浏览器导航兜底，不是数据丢失。
+            this.bot.logger.debug(
                 this.bot.isMobile,
                 'BOOTSTRAP',
                 `获取 ${route} HTML 失败 | 状态码=${res.status()} - 快照和 action 发现可能不完整`
             )
         } catch (error) {
-            this.bot.logger.warn(
+            this.bot.logger.debug(
                 this.bot.isMobile,
                 'BOOTSTRAP',
                 `获取 ${route} HTML 失败 | 错误=${error instanceof Error ? error.message : String(error)} - 快照和 action 发现可能不完整`
             )
         }
 
+        // 回退：apiRequestContext 走的是 Node 的 TLS 栈（非浏览器指纹），
+        // rewards.bing.com 对这类请求会直接 RST（实测 read ECONNRESET，浏览器导航却正常）。
+        // 这里改用浏览器导航拿同一份 HTML，顺手把页面导航回原地址。
+        return this.fetchHtmlViaBrowser(page, url, route)
+    }
+
+    private async fetchHtmlViaBrowser(page: Page, url: string, route: string): Promise<string> {
+        try {
+            const returnUrl = page.url()
+            const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 })
+            if (response && response.ok()) {
+                const html = await page.content()
+                this.bot.logger.info(
+                    this.bot.isMobile,
+                    'BOOTSTRAP',
+                    `${route} 已通过浏览器导航获取 HTML | ${html.length} 字符`
+                )
+                if (returnUrl && returnUrl !== url) {
+                    await page
+                        .goto(returnUrl, { waitUntil: 'domcontentloaded', timeout: 20000 })
+                        .catch(() => undefined)
+                }
+                return html
+            }
+            this.bot.logger.warn(
+                this.bot.isMobile,
+                'BOOTSTRAP',
+                `浏览器导航获取 ${route} HTML 失败 | 状态码=${response ? response.status() : 'n/a'}`
+            )
+        } catch (error) {
+            this.bot.logger.warn(
+                this.bot.isMobile,
+                'BOOTSTRAP',
+                `浏览器导航获取 ${route} HTML 失败 | 错误=${error instanceof Error ? error.message : String(error)}`
+            )
+        }
         return ''
     }
 
@@ -589,7 +683,8 @@ export default class BrowserFunc {
                 if (isBrowserClosedError(error)) {
                     this.bot.logger.debug(this.bot.isMobile, 'CLOSE-BROWSER', '浏览器已处于关闭状态。')
                 } else {
-                    this.bot.logger.warn(
+                    // 收尾阶段的问题，进程仍正常退出；真故障前面已经单独报过。
+                    this.bot.logger.debug(
                         this.bot.isMobile,
                         'CLOSE-BROWSER',
                         '关闭时遇到错误，但进程仍在退出。'

@@ -55,10 +55,11 @@ export class DailyCheckIn extends BaseActivity {
                     'green'
                 )
             } else {
-                this.bot.logger.warn(
+                // 请求已成功（HTTP 200），余额不变通常是「今天已经签到过」，不是失败。
+                this.bot.logger.debug(
                     this.bot.isMobile,
                     'DAILY-CHECK-IN',
-                    `每日签到完成但未获得积分 | type=103 | pointsGained=0 | currentBalance=${newBalance}`
+                    `每日签到完成但未获得积分（可能今日已签到）| type=103 | pointsGained=0 | currentBalance=${newBalance}`
                 )
             }
         } catch (error) {

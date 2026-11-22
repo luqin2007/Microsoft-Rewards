@@ -83,7 +83,8 @@ export class BonusTracker implements SearchTracker {
 
         const cur = this.findOfferById(dash, this.offerId)
         if (!cur) {
-            this.bot.logger.warn(this.isMobile, this.context, `活动 ${this.offerId} 已不存在，停止`)
+            // 活动自然结束，正常停止，不进失败统计。
+            this.bot.logger.debug(this.isMobile, this.context, `活动 ${this.offerId} 已不存在，停止`)
             this.offerLost = true
             return 0
         }

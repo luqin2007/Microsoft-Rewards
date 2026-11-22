@@ -13,7 +13,7 @@ export class EnsureStreakProtection extends BaseActivity {
     public async ensureStreakProtection() {
         const resolved = this.resolveActionId()
         if (!resolved) {
-            this.bot.logger.warn(
+            this.bot.logger.debug(
                 this.bot.isMobile,
                 'ENABLE-STREAK-PROTECTION',
                 `跳过：bundle 中未发现连击保护 action id（查找过 [${STREAK_PROTECTION_ACTION_NAMES.join(', ')}] 及任何 "*streak*protect*" 键）`
