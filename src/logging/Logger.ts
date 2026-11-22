@@ -58,6 +58,31 @@ function formatMessage(message: string | Error): string {
 }
 
 /**
+ * 日志里的账号信息脱敏，规则与 GUI 的 mask_email() 保持一致（保留前 3 位 + ****）。
+ * 只作用于输出文本，不碰 .env / config / 运行逻辑。
+ * 邮箱正文和行首 [userName]（就是邮箱前缀）都要脱敏；MAIN 是系统标记，保持原样。
+ */
+const EMAIL_IN_LOG = /([A-Za-z0-9._%+-]+)@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/g
+
+export function maskEmails(text: string): string {
+    return text.replace(EMAIL_IN_LOG, (_match, local: string, domain: string) => {
+        const head = local.length > 3 ? local.slice(0, 3) : local.slice(0, 1)
+        return `${head}****@${domain}`
+    })
+}
+
+/**
+ * 行首账号名来自 getEmailUsername(email)，就是邮箱 @ 前面的部分。
+ * 之前为了多账号区分留了明文，2026-11-16 按用户要求也脱敏；
+ * 规则与 maskEmails 的前缀部分完全一致，脱敏后仍能区分 sam**** / hua****。
+ */
+export function maskUserName(name: string): string {
+    if (!name || name === 'MAIN') return name
+    const head = name.length > 3 ? name.slice(0, 3) : name.slice(0, 1)
+    return `${head}****`
+}
+
+/**
  * 日志保留天数，超期的日志文件在进程首次写日志时清理
  */
 const LOG_RETENTION_DAYS = 90
@@ -159,9 +184,14 @@ export class Logger {
 
         const now = new Date().toLocaleString()
         const formatted = formatMessage(message)
+        const masked = maskEmails(formatted)
         const userName = this.bot.userData.userName || 'MAIN'
+        const displayUser = maskUserName(userName)
         const levelTag = level.toUpperCase()
-        const cleanMsg = `[${now}] [${userName}] [${levelTag}] ${platformText(isMobile)} [${title}] ${formatted}`
+        // 文件 / 控制台 / webhook 三处统一用脱敏后的文本（含行首账号前缀）
+        const cleanMsg = `[${now}] [${displayUser}] [${levelTag}] ${platformText(isMobile)} [${title}] ${masked}`
+        // 黑白名单过滤仍按原文判定，避免用户配置的邮箱/账号关键词在脱敏后失配
+        const rawMsg = `[${now}] [${userName}] [${levelTag}] ${platformText(isMobile)} [${title}] ${formatted}`
 
         // 保存日志到本地文件
         writeLogToFile(cleanMsg)
@@ -172,8 +202,8 @@ export class Logger {
             errorDiagnostic(page, error)
         }
 
-        const consoleAllowed = this.shouldPassFilter(config.consoleLogFilter, level, cleanMsg)
-        const webhookAllowed = this.shouldPassFilter(config.webhook.webhookLogFilter, level, cleanMsg)
+        const consoleAllowed = this.shouldPassFilter(config.consoleLogFilter, level, rawMsg)
+        const webhookAllowed = this.shouldPassFilter(config.webhook.webhookLogFilter, level, rawMsg)
 
         if (consoleAllowed) {
             let logColor: ColorKey | undefined = color
@@ -183,7 +213,7 @@ export class Logger {
                 else if (level === 'debug') logColor = 'magenta'
             }
 
-            const consoleStr = `[${now}] [${userName}] [${levelTag}] ${platformBadge(isMobile)} [${title}] ${formatted}`
+            const consoleStr = `[${now}] [${displayUser}] [${levelTag}] ${platformBadge(isMobile)} [${title}] ${masked}`
             consoleOut(level, consoleStr, getColorFn(logColor))
         }
 
