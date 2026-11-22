@@ -3,6 +3,7 @@ import path from 'path'
 
 import type { Account, AccountProxy, ConfigSaveFingerprint } from '../interface/Account'
 import type { Config } from '../interface/Config'
+import { resolveDataItem } from './UserData'
 import { validateAccounts, validateConfig } from './Validator'
 
 let configCache: Config
@@ -22,7 +23,12 @@ export function getProjectRoot(): string {
 }
 
 // Check root -> dist -> src (not in dist, but root)
+// .env / config.json 例外：它们属于用户数据，放在 %LOCALAPPDATA%\MRS助手\，
+// 换版本不丢。GUI 写的是用户目录那份，脚本必须读同一份，否则设置改了不生效。
 function resolveProjectFile(filename: string): string | undefined {
+    if (filename === '.env') return resolveDataItem('.env')
+    if (filename === 'config.json') return resolveDataItem('config.json')
+
     const root = getProjectRoot()
     const candidates = [
         path.join(process.cwd(), filename),

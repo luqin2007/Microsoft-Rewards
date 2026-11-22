@@ -44,14 +44,14 @@
             "china",
             "local"
         ],
-        "searchResultVisitTime": "20sec",
+        "searchResultVisitTime": "10sec",
         "searchDelay": {
-            "min": "6min",
-            "max": "12min"
+            "min": "30sec",
+            "max": "1min"
         },
         "readDelay": {
-            "min": "6min",
-            "max": "11min"
+            "min": "30sec",
+            "max": "1min"
         },
         "chinaApi": {
             "appkey": ""
@@ -63,7 +63,8 @@
         "blockMedia": false,
         "edgeBrowsing": false
     },
-    "debugLogs": true,
+    "debugLogs": false,
+    "compactLog": true,
     "consoleLogFilter": {
         "enabled": false,
         "mode": "whitelist",
@@ -129,6 +130,6 @@
             }
         ],
         "searchTargetRatio": { "min": 0.85, "max": 1.0 },
-        "readToEarnArticles": { "min": 7, "max": 10 }
+        "readToEarnArticles": { "min": 10, "max": 13 }
     }
 }
