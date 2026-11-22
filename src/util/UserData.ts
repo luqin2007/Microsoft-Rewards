@@ -17,8 +17,9 @@ import path from 'node:path';
  */
 const APP_DIR_NAME = 'MRS助手';
 
-export const DATA_FILES = ['.env', 'config.json', 'clawbot-auth.json'];
-export const DATA_DIRS = ['sessions'];
+export const DATA_FILES = ['.env', 'config.json', 'clawbot-auth.json'] as const
+export const DATA_DIRS = ['sessions'] as const
+export type DataItem = (typeof DATA_FILES)[number] | (typeof DATA_DIRS)[number]
 
 /** 解压目录 / 源码树根（dist 的上一级，或 exe 所在目录）。 */
 export function appRoot(): string {
@@ -89,7 +90,7 @@ function copyMissing(src: string, dst: string): boolean {
  *
  * 返回的永远是用户数据目录的路径——往后读写都落在那儿。
  */
-export function resolveDataItem(name: string): string {
+export function resolveDataItem(name: DataItem): string {
     const dst = path.join(ensureDataRoot(), name);
     const src = path.join(appRoot(), name);
     if (path.resolve(src) === path.resolve(dst)) return dst;
