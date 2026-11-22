@@ -69,8 +69,23 @@ export function getProjectRoot(startDir) {
     throw new Error('Could not locate project root (package.json not found).')
 }
 
+/**
+ * 用户数据目录（默认 `%LOCALAPPDATA%\MRS助手`），与 src/util/UserData.ts 规则一致。
+ * 上游把 .env / config.json / sessions 迁到这里，API 必须读同一份，否则和 node 进程
+ * 看到的状态不一致（GUI 改完设置脚本读不到）。
+ */
+export function resolveDataDir() {
+    const override = (process.env.MRS_DATA_DIR ?? '').trim()
+    if (override) return path.resolve(override)
+    const base =
+        (process.env.LOCALAPPDATA ?? '').trim() ||
+        path.join(process.env.USERPROFILE ?? process.cwd(), 'AppData', 'Local')
+    return path.join(base, 'MRS助手')
+}
+
 export function loadEnvFile(projectRoot) {
     const candidates = [
+        path.join(resolveDataDir(), '.env'),
         path.resolve(process.cwd(), '.env'),
         path.join(projectRoot, '.env'),
         path.join(projectRoot, 'dist', '.env')
@@ -96,6 +111,7 @@ export function loadEnvFile(projectRoot) {
 
 export function loadConfigSafe(projectRoot) {
     const candidates = [
+        path.join(resolveDataDir(), 'config.json'),
         path.join(projectRoot, 'config.json'),
         path.join(projectRoot, 'dist', 'config.json'),
         path.join(projectRoot, 'src', 'config.json'),

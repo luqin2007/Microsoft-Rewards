@@ -1,9 +1,12 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { resolveDataDir } from './lib.js'
 
 function resolveSessionDb(projectRoot, sessionPath) {
     const candidates = [
+        // 上游把 sessions 迁到用户数据目录，node 进程实际写的是这一份
+        path.join(resolveDataDir(), sessionPath, 'sessions.db'),
         path.resolve(process.cwd(), sessionPath, 'sessions.db'),
         path.join(projectRoot, sessionPath, 'sessions.db'),
         path.join(projectRoot, 'dist', sessionPath, 'sessions.db'),
