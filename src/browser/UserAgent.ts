@@ -174,7 +174,7 @@ export class UserAgentManager {
             return version
         } catch (error) {
             const fallback = BROWSER_VERSION_FALLBACKS.chrome
-            this.bot.logger.warn(
+            this.bot.logger.info(
                 isMobile,
                 'USERAGENT-CHROME-VERSION',
                 `版本查询不可用 (${error instanceof Error ? error.message : String(error)})；使用内置回退版本 ${fallback}`
@@ -216,7 +216,7 @@ export class UserAgentManager {
             return { android, desktop }
         } catch (error) {
             const fallback = BROWSER_VERSION_FALLBACKS.edge
-            this.bot.logger.warn(
+            this.bot.logger.info(
                 isMobile,
                 'USERAGENT-EDGE-VERSION',
                 `版本查询不可用 (${error instanceof Error ? error.message : String(error)})；使用内置回退版本 Android ${fallback.android}，桌面版 ${fallback.windows}`
