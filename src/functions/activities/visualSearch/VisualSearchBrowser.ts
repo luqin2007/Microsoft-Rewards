@@ -191,7 +191,8 @@ export class VisualSearchBrowser {
     public async getSeedUrls(): Promise<string[]> {
         const page = this.bot.mainDesktopPage
         if (!page || page.isClosed()) {
-            this.bot.logger.warn(
+            // 已回退到静态种子，同文件其他回退分支也是 DEBUG。
+            this.bot.logger.debug(
                 this.bot.isMobile,
                 'VISUAL-SEARCH-BCID',
                 '桌面端页面不可用 - 使用静态视觉搜索种子'

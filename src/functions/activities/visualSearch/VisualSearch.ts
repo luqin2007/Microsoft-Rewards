@@ -498,7 +498,8 @@ export class VisualSearch extends BaseActivity {
                 return visual
             }
 
-            this.bot.logger.warn(
+            // 去重跳过，会继续换下一个候选种子。
+            this.bot.logger.debug(
                 this.bot.isMobile,
                 'VISUAL-SEARCH',
                 `跳过已尝试过的 bcid=${visual.bcid.slice(0, 14)} | candidatesRemaining=${candidateSeeds.length}`

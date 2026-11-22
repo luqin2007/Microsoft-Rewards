@@ -12,7 +12,7 @@ export class UrlReward extends BaseActivity {
 
         const actionId = this.bot.nextActions.reportActivity
         if (!actionId) {
-            this.bot.logger.warn(
+            this.bot.logger.debug(
                 this.bot.isMobile,
                 'URL-REWARD',
                 `跳过 ${offerId}：bundle 中未发现 "reportActivity"`
@@ -22,7 +22,7 @@ export class UrlReward extends BaseActivity {
 
         const live = await this.bot.browser.func.ensureOffer(offerId)
         if (!live) {
-            this.bot.logger.warn(
+            this.bot.logger.debug(
                 this.bot.isMobile,
                 'URL-REWARD',
                 `跳过 ${offerId}：页面快照中不存在，即使重新获取 /earn 和 /dashboard 后也没有`
@@ -30,7 +30,7 @@ export class UrlReward extends BaseActivity {
             return
         }
         if (!live.reportable) {
-            this.bot.logger.warn(
+            this.bot.logger.debug(
                 this.bot.isMobile,
                 'URL-REWARD',
                 `跳过 ${offerId}：不可上报（已完成/已锁定/无 hash/未到期）`

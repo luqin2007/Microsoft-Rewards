@@ -15,7 +15,7 @@ export async function activateSearchOnBing(bot: MicrosoftRewardsBot, promotion: 
     const actionId = bot.nextActions.reportActivity
 
     if (!actionId) {
-        bot.logger.warn(
+        bot.logger.debug(
             bot.isMobile,
             'SEARCH-ON-BING-ACTIVATE',
             `跳过 ${offerId}: 未在 bundle 中发现 "reportActivity"`
@@ -26,7 +26,7 @@ export async function activateSearchOnBing(bot: MicrosoftRewardsBot, promotion: 
     const live = await bot.browser.func.ensureOffer(offerId)
     const hash = live?.hash ?? promotion.hash ?? null
     if (!hash) {
-        bot.logger.warn(
+        bot.logger.debug(
             bot.isMobile,
             'SEARCH-ON-BING-ACTIVATE',
             `跳过 ${offerId}: 激活活动无可用 hash`
@@ -110,7 +110,8 @@ export async function getSearchOnBingQueries(bot: MicrosoftRewardsBot, promotion
         )
         return fallbackQueries(promotion)
     } catch (error) {
-        bot.logger.error(
+        // 已有回退（标题+描述），不是任务失败，别用 ERROR 吓人。
+        bot.logger.debug(
             bot.isMobile,
             'SEARCH-ON-BING-QUERY',
             `解析查询词出错 | 标题="${promotion.title}" | 错误=${error instanceof Error ? error.message : String(error)} | 回退=标题与描述`

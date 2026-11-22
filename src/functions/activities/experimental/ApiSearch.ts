@@ -50,7 +50,7 @@ export class ApiSearch extends BaseActivity {
             while (performed < MAX_SEARCHES) {
                 const query = await queryQueue.next()
                 if (!query) {
-                    this.bot.logger.warn(isMobile, 'SEARCH-BING', '查询队列已耗尽，停止')
+                    this.bot.logger.debug(isMobile, 'SEARCH-BING', '查询队列已耗尽，停止')
                     break
                 }
 
@@ -58,7 +58,7 @@ export class ApiSearch extends BaseActivity {
                 performed++
 
                 if (!res.ig) {
-                    this.bot.logger.warn(isMobile, 'SEARCH-BING', `查询 "${query}" 无 IG - 跳过`)
+                    this.bot.logger.debug(isMobile, 'SEARCH-BING', `查询 "${query}" 无 IG - 跳过`)
                     continue
                 }
 
@@ -199,7 +199,7 @@ export class ApiSearch extends BaseActivity {
             while (!tracker.done() && performed < tracker.maxSearches && stagnant < tracker.stagnantLimit) {
                 const query = await queryQueue.next()
                 if (!query) {
-                    this.bot.logger.warn(isMobile, tracker.context, '查询队列已耗尽，停止')
+                    this.bot.logger.debug(isMobile, tracker.context, '查询队列已耗尽，停止')
                     break
                 }
 
@@ -207,7 +207,7 @@ export class ApiSearch extends BaseActivity {
                 performed++
 
                 if (!res.ig) {
-                    this.bot.logger.warn(isMobile, tracker.context, `查询 "${query}" 无 IG - 跳过`)
+                    this.bot.logger.debug(isMobile, tracker.context, `查询 "${query}" 无 IG - 跳过`)
                     continue
                 }
 

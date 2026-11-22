@@ -8,7 +8,7 @@ export class ClaimReward extends BaseActivity {
 
         const actionId = this.bot.nextActions.reportActivity
         if (!actionId) {
-            this.bot.logger.warn(
+            this.bot.logger.debug(
                 this.bot.isMobile,
                 'CLAIM-REWARD',
                 `跳过 ${offerId}：bundle 中未发现 "reportActivity"`
@@ -17,11 +17,11 @@ export class ClaimReward extends BaseActivity {
         }
 
         if (!child.hash) {
-            this.bot.logger.warn(this.bot.isMobile, 'CLAIM-REWARD', `跳过 ${offerId}：任务子项没有有效的 hash`)
+            this.bot.logger.debug(this.bot.isMobile, 'CLAIM-REWARD', `跳过 ${offerId}：任务子项没有有效的 hash`)
             return
         }
         if (!child.reportable) {
-            this.bot.logger.warn(
+            this.bot.logger.debug(
                 this.bot.isMobile,
                 'CLAIM-REWARD',
                 `跳过 ${offerId}：不可上报（已完成/已锁定/已禁用）`
@@ -75,6 +75,7 @@ export class ClaimReward extends BaseActivity {
                     'green'
                 )
             } else {
+                // 真没领到要让用户知道，保持 WARN。
                 this.bot.logger.warn(
                     this.bot.isMobile,
                     'CLAIM-REWARD',
