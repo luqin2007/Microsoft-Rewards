@@ -11,7 +11,8 @@ import { PasswordlessLogin } from './methods/PasswordlessLogin'
 import { TotpLogin } from './methods/Totp2FALogin'
 import { CodeLogin } from './methods/GetACodeLogin'
 import { RecoveryLogin } from './methods/RecoveryEmailLogin'
-import { canPromptForInput } from './methods/LoginUtils'
+import type { ManualEntryOutcome } from './methods/LoginUtils'
+import { canPromptForInput, waitForManualEntryOnPage } from './methods/LoginUtils'
 
 import type { Account } from '../../interface/Account'
 
@@ -54,6 +55,8 @@ export class Login {
     private readonly capturedUnknownUrls = new Set<string>()
     private signInMethodsLogged = false
     private passwordlessMethodSelected = false
+    /** 验证码页上等用户手动完成的时长（GUI 无终端时唯一可行的方式） */
+    private readonly manualEntrySeconds = 180
 
     private readonly selectors = {
         primaryButton: 'button[data-testid="primaryButton"]',
@@ -530,6 +533,46 @@ export class Login {
         return true
     }
 
+    /**
+     * 在验证码输入页等用户自己把码输完。
+     *
+     * GUI 拉起的进程没有交互式终端（`process.stdin.isTTY === false`），原来这种页面只能
+     * 「放弃登录并立刻关窗口」，用户刚看到页面正要输入窗口就没了。这里改成按页面状态等待：
+     * 一旦检测到已经离开验证码页（输入正确跳转 / 换用别的验证方式），立刻回到主循环。
+     */
+    private async waitForOtpPageEnteredByUser(page: Page): Promise<ManualEntryOutcome> {
+        if (this.bot.config.headless) return 'timeout'
+
+        this.bot.logger.info(
+            this.bot.isMobile,
+            'LOGIN',
+            `没有可用的备选登录方式 —— 请在浏览器窗口里自行完成验证码输入，最长等 ${this.manualEntrySeconds} 秒`
+        )
+
+        const outcome = await waitForManualEntryOnPage(page, this.bot.logger, this.bot.isMobile, {
+            waitSelectors: [
+                this.selectors.otpCodeEntry,
+                this.selectors.otpInput,
+                this.selectors.emailVerificationInput,
+                this.selectors.recoveryEmail
+            ],
+            doneSelectors: [
+                this.selectors.passwordEntry,
+                this.selectors.emailEntry,
+                this.selectors.signInTile,
+                this.selectors.bingProfile
+            ],
+            timeoutSeconds: this.manualEntrySeconds,
+            tag: 'LOGIN',
+            message: '仍在等待浏览器窗口里的手动验证…'
+        })
+
+        if (outcome === 'left-page') {
+            this.bot.logger.info(this.bot.isMobile, 'LOGIN', '手动验证已完成或页面已跳转，继续后续流程')
+        }
+        return outcome
+    }
+
     private async handleState(state: LoginState, page: Page, account: Account): Promise<boolean> {
         this.bot.logger.debug(this.bot.isMobile, 'HANDLE-STATE', `处理状态: ${state}`)
 
@@ -554,7 +597,7 @@ export class Login {
                     }
                 }
                 if (!errorMsg) {
-                    this.bot.logger.warn(this.bot.isMobile, 'LOGIN', '告警容器无文本，视为瞬时状态，稍后重新检测')
+                    this.bot.logger.debug(this.bot.isMobile, 'LOGIN', '告警容器无文本，视为瞬时状态，稍后重新检测')
                     await this.bot.utils.wait(2000)
                     return true
                 }
@@ -808,6 +851,11 @@ export class Login {
                     return true
                 }
 
+                // 没有交互式终端（GUI 启动的进程就是这种）时，不能直接放弃并关窗口。
+                // 先把页面留给用户自己收验证码、自己输入，完成后主循环会自动继续。
+                const outcome = await this.waitForOtpPageEnteredByUser(page)
+                if (outcome === 'left-page') return true
+
                 this.bot.logger.warn(this.bot.isMobile, 'LOGIN', '未找到可用的邮箱验证备选方式')
                 return false
             }
@@ -930,12 +978,17 @@ export class Login {
                 }
 
                 this.passwordlessMethodSelected = false
-                if (!(await this.tryClick(page, this.selectors.backButton, 'Back button'))) {
-                    this.bot.logger.warn(this.bot.isMobile, 'LOGIN', 'OTP页面上没有可用的备选操作')
-                    return false
+                if (await this.tryClick(page, this.selectors.backButton, 'Back button')) {
+                    return true
                 }
 
-                return true
+                // 没有可用的备选操作时，绝不能直接判失败——那会在用户刚看到验证码页、
+                // 正要输入时把窗口关掉。先让用户在这个页面里自己完成验证。
+                const outcome = await this.waitForOtpPageEnteredByUser(page)
+                if (outcome === 'left-page') return true
+
+                this.bot.logger.warn(this.bot.isMobile, 'LOGIN', 'OTP页面上没有可用的备选操作')
+                return false
             }
 
             // Unknown page - keep diagnostics useful instead of guessing a sign-in action
@@ -982,7 +1035,8 @@ export class Login {
                 )
             }
         } else {
-            this.bot.logger.warn(this.bot.isMobile, 'LOGIN', '无法验证奖励仪表板，假定登录有效')
+            // 只在非 bing 仪表板页才会走到，流程仍继续，不是登录失败。
+            this.bot.logger.info(this.bot.isMobile, 'LOGIN', '无法验证奖励仪表板，假定登录有效')
         }
 
         // Dismiss at rewards dashboard
@@ -1060,9 +1114,10 @@ export class Login {
                 await this.bot.utils.wait(1000)
             }
 
-            this.bot.logger.warn(this.bot.isMobile, 'LOGIN-BING', '无法验证Bing会话，继续执行')
+            // Bing 会话验证是 best-effort，文案已写明「继续执行」，不该用 WARN。
+            this.bot.logger.debug(this.bot.isMobile, 'LOGIN-BING', '无法验证Bing会话，继续执行')
         } catch (error) {
-            this.bot.logger.warn(
+            this.bot.logger.debug(
                 this.bot.isMobile,
                 'LOGIN-BING',
                 `验证错误: ${error instanceof Error ? error.message : String(error)}`
