@@ -10,6 +10,7 @@ Run with:  python gui/app.py
 
 from __future__ import annotations
 
+import json
 import os
 import queue
 import re
@@ -51,6 +52,8 @@ GUI_DIR, ROOT = _resolve_paths()
 ENV_PATH = os.path.join(ROOT, '.env')
 CONFIG_PATH = os.path.join(ROOT, 'config.json')
 CONFIG_EXAMPLE = os.path.join(ROOT, 'config.example.json')
+# 记录“已经提醒过的版本”，避免每次启动都重复推同一条更新通知
+UPDATE_NOTIFIED_NAME = 'update-notified.json'
 
 EMAIL_RE = re.compile(r'^[\w.+-]+@[\w-]+\.[\w.-]+$')
 
@@ -1066,6 +1069,28 @@ class App(ctk.CTk):
             pass
         return ''
 
+    def _update_notified_path(self) -> str:
+        return os.path.join(ROOT, UPDATE_NOTIFIED_NAME)
+
+    def _should_notify_update(self, server_version: str) -> bool:
+        """同一版本只提醒一次；升级到更新的版本后才会再次提醒。"""
+        try:
+            with open(self._update_notified_path(), encoding='utf-8') as fh:
+                return str(json.load(fh).get('version') or '') != server_version
+        except Exception:
+            return True
+
+    def _mark_update_notified(self, server_version: str) -> None:
+        try:
+            with open(self._update_notified_path(), 'w', encoding='utf-8') as fh:
+                json.dump(
+                    {'version': server_version, 'notifiedAt': time.strftime('%Y-%m-%dT%H:%M:%S')},
+                    fh,
+                    ensure_ascii=False,
+                )
+        except Exception:
+            pass
+
     def _notify_update(self, info: Dict) -> None:
         """静默推送更新通知（后台线程，失败只记状态栏，不影响任务）。"""
         server = str(info.get('Version') or '')
@@ -1073,6 +1098,9 @@ class App(ctk.CTk):
         notify_url = self._get_notify_url()
         if not notify_url:
             return
+        if not self._should_notify_update(server):
+            return
+        self._mark_update_notified(server)
 
         message = (
             f'# MRS 助手发现新版本\n\n'
