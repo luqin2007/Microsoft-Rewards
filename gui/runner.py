@@ -61,11 +61,14 @@ def classify(line: str) -> str:
 class BotRunner:
     """Thin subprocess wrapper with line callbacks."""
 
-    def __init__(self) -> None:
+    def __init__(self, write_state: bool = True) -> None:
         self.proc: Optional[subprocess.Popen] = None
         self._thread: Optional[threading.Thread] = None
         self.on_line: Optional[Callable[[str], None]] = None
         self.on_exit: Optional[Callable[[int], None]] = None
+        # GUI 自己写 run-state.json；引擎（gui/engine.py）有多余字段要写，
+        # 会传 write_state=False 接管这个文件的写入。
+        self._write_state_enabled = write_state
 
     @property
     def running(self) -> bool:
@@ -101,16 +104,17 @@ class BotRunner:
             bufsize=1,
             creationflags=_NO_WINDOW,
         )
-        _write_state(
-            {
-                'state': 'running',
-                'pid': self.proc.pid,
-                'startedAt': _utc_now(),
-                'entry': entry,
-                'nodeExe': node_exe,
-                'cwd': cwd,
-            }
-        )
+        if self._write_state_enabled:
+            _write_state(
+                {
+                    'state': 'running',
+                    'pid': self.proc.pid,
+                    'startedAt': _utc_now(),
+                    'entry': entry,
+                    'nodeExe': node_exe,
+                    'cwd': cwd,
+                }
+            )
         self._thread = threading.Thread(target=self._pump, daemon=True)
         self._thread.start()
 
@@ -130,14 +134,15 @@ class BotRunner:
             except Exception:
                 pass
         code = proc.wait()
-        _write_state(
-            {
-                'state': 'idle',
-                'pid': None,
-                'startedAt': None,
-                'lastExit': {'code': code, 'at': _utc_now()},
-            }
-        )
+        if self._write_state_enabled:
+            _write_state(
+                {
+                    'state': 'idle',
+                    'pid': None,
+                    'startedAt': None,
+                    'lastExit': {'code': code, 'at': _utc_now()},
+                }
+            )
         if self.on_exit:
             self.on_exit(code)
 
