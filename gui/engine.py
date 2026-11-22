@@ -528,24 +528,123 @@ class MrsEngine:
 
     # ------------------------------------------------------------ 配置读写
 
-    def get_config(self) -> Dict[str, Any]:
-        return cs.load(self.config_path, self.example_path)
+    def _load_config(self) -> Dict[str, Any]:
+        """读配置，并把被历史写入弄坏的结构修回可读形态。
 
-    def put_config(self, patch: Dict[str, Any]) -> Dict[str, Any]:
-        """深合并写入（只覆盖传入的键，其余原样保留）。"""
+        `humanize` 在原始配置里是字典 `{enabled, quietHours, ...}`，但旧版
+        `put_config()` 会把 UI 传来的布尔值直接深合并进去，整块字典被
+        覆盖成 `true`/`false` 并落盘；此后 `config_store.get_simple()`
+        调 `humanize.get(...)` 就会 AttributeError。这里在读取时兜一层，
+        保证引擎自己不会因为一份坏配置而全线不可用。
+        """
         config = cs.load(self.config_path, self.example_path)
-        config = cs._deep_merge(config, patch or {})  # noqa: SLF001 - 复用同一套合并规则
-        cs.save(self.config_path, config)
+        if not isinstance(config.get('humanize'), dict):
+            config['humanize'] = {'enabled': bool(config.get('humanize'))}
+        # preset / delay_preset 是派生的 UI 档位，不该作为键写进 config.json
+        config.pop('preset', None)
+        config.pop('delay_preset', None)
         return config
 
+    def get_config(self) -> Dict[str, Any]:
+        """返回 UI 要的精简结构（不是 config.json 的原始完整配置）。
+
+        BUG-2：以前直接返回 `cs.load()` 的结果 —— 23+ 个键、`humanize` 是
+        字典、没有 `preset` / `delay_preset`，网关只能自己再归一化一遍。
+        现在由引擎直接给 UI 结构：`config_store.get_simple()` 的字段外加
+        两个派生档位，网关原样透传即可。
+        """
+        return self._simple_of(self._load_config())
+
+    @staticmethod
+    def _simple_of(config: Dict[str, Any]) -> Dict[str, Any]:
+        """原始配置 → UI 精简结构（补 preset / delay_preset）。"""
+        simple = cs.get_simple(config)
+        simple['preset'] = cs.detect_preset(config)
+        # get_simple 已含 delay_preset，这里显式再算一次，保证键一定存在
+        simple['delay_preset'] = cs.detect_delay_preset(config)
+        return simple
+
+    def put_config(self, patch: Dict[str, Any]) -> Dict[str, Any]:
+        """写入 UI 精简结构（`get_config()` 的逆操作），只覆盖传入的键。
+
+        UI 的载荷是精简结构：`humanize` 是布尔、带 `preset` / `delay_preset`。
+        旧实现用 `_deep_merge` 直接合并，会把这三处写坏（见 `_load_config`
+        的说明）。这里按语义拆开处理：
+
+        * `preset`        先套用档位开关，作为后续 workers 的基线
+        * 精简字段        只覆盖载荷里出现的键；未出现的键保持原值
+        * `delay_preset`  走 `apply_delay_preset`
+        * 其余键          按原始配置的键深合并（兼容传完整配置的调用方）
+        """
+        if not isinstance(patch, dict):
+            raise TypeError('patch 必须是 dict')
+
+        config = self._load_config()
+
+        # 1) 档位先套用，让显式 workers 覆盖它
+        preset = patch.get('preset')
+        if isinstance(preset, str) and preset in cs.PRESET_ORDER:
+            cs.apply_preset(config, preset)
+
+        simple_keys = (
+            'headless',
+            'clusters',
+            'debugLogs',
+            'humanize',
+            'skipNonPointTasks',
+            'ensureStreakProtection',
+            'browserChannel',
+            'workers',
+            'delay_preset',
+        )
+
+        # 2) 精简字段：基于「当前完整精简状态」做局部覆盖再整体回写。
+        #    apply_simple() 带默认值，直接传局部载荷会把没提交的开关抹成默认值，
+        #    所以先用当前值铺底，只替换载荷里出现的键。
+        merged = self._simple_of(config)
+        for key in simple_keys:
+            if key in patch and key != 'humanize':
+                merged[key] = patch[key]
+
+        # humanize 有两种入参：UI 传布尔；也可能有人传原始字典结构
+        humanize = patch.get('humanize')
+        humanize_dict = humanize if isinstance(humanize, dict) else None
+        if 'humanize' in patch and humanize_dict is None:
+            merged['humanize'] = bool(humanize)
+
+        cs.apply_simple(config, merged)
+
+        # apply_simple 只写 humanize.enabled，会把原始字典的其余子键保留下来；
+        # 若调用方传的是字典，再把它其余子键合并进去（enabled 已在 merged 里）
+        if humanize_dict is not None:
+            config['humanize'] = dict(config.get('humanize') or {})
+            config['humanize'].update(humanize_dict)
+
+        # 3) 其余原始配置键：深合并（preset / delay_preset 已消费，不落盘）
+        extra = {
+            key: value
+            for key, value in patch.items()
+            if key not in simple_keys and key != 'preset'
+        }
+        if extra:
+            config = cs._deep_merge(config, extra)  # noqa: SLF001 - 同一套合并规则
+
+        # 4) 兜底：humanize 永远是字典，绝不让布尔值落盘
+        if not isinstance(config.get('humanize'), dict):
+            config['humanize'] = {'enabled': bool(config.get('humanize'))}
+        config.pop('preset', None)
+        config.pop('delay_preset', None)
+
+        cs.save(self.config_path, config)
+        return self._simple_of(config)
+
     def get_simple(self) -> Dict[str, Any]:
-        return cs.get_simple(self.get_config())
+        """与原语义一致：只要 `get_simple()` 字段（不含派生档位）。"""
+        return cs.get_simple(self._load_config())
 
     def put_simple(self, simple: Dict[str, Any]) -> Dict[str, Any]:
-        config = cs.load(self.config_path, self.example_path)
-        cs.apply_simple(config, simple or {})
-        cs.save(self.config_path, config)
-        return cs.get_simple(config)
+        """写入精简结构（不认 preset / delay_preset 以外的原始键）。"""
+        return self.put_config(simple or {})
 
     # ------------------------------------------------------------ 账号读写
 
