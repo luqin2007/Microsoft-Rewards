@@ -417,8 +417,25 @@ export class Login {
     }
 
     private async getSignInMethodOptions(page: Page): Promise<SignInMethodOption[]> {
-        const tiles = page.locator(this.selectors.signInTile)
-        const count = await tiles.count().catch(() => 0)
+        // 2026-11-21：登录方式选择页是异步渲染的（尤其是从 OTP 页按 Back 返回后）。
+        // 原先直接读 tiles.count()，页面还没画出来时读到 0 个 → 上游判「没有可用的受支持
+        // 登录方式」→ 登录致命退出。用户重跑一次反而成功，因为第二次页面已经就绪。
+        // 这里先等候选节点出现（最多 4 秒），再读取；仍旧为空时再补一次短等待后重试。
+        const tileLocator = this.selectors.signInTile
+        await page
+            .waitForSelector(`${tileLocator}, ${this.selectors.passwordlessOptionOld}, ${this.selectors.emailIconOld}`, {
+                state: 'attached',
+                timeout: 4000
+            })
+            .catch(() => {
+                this.bot.logger.debug(this.bot.isMobile, 'LOGIN', '登录方式选择页候选节点未在 4 秒内出现')
+            })
+        const tiles = page.locator(tileLocator)
+        let count = await tiles.count().catch(() => 0)
+        if (count === 0) {
+            await this.bot.utils.wait(1200)
+            count = await tiles.count().catch(() => 0)
+        }
         const options = await Promise.all(
             Array.from({ length: count }, async (_, index): Promise<SignInMethodOption | null> => {
                 const tile = tiles.nth(index)
@@ -742,12 +759,36 @@ export class Login {
 
                 const emailIconOldFound = await this.checkSelector(page, this.selectors.emailIconOld)
                 if (emailOption || emailIconOldFound) {
+                    // 2026-11-23：GUI 用户没有交互式终端，但页面上明明摆着「传送验证码到 email」。
+                    // 原实现在这里直接 return false，用户刚看到登录方式列表、正要选就被关窗口
+                    // （真实反馈：日志里 04:38:48 列出「使用您的密碼 | 傳送驗證碼到 email」，
+                    //  10 秒后 04:38:58 直接 ERROR「没有可用的非交互登录方式」判死）。
+                    // 现在把选择权交回窗口：让用户自己点那个选项、自己在浏览器里收码填写，
+                    // 脚本只负责按页面状态等他做完。headless 下没人能操作，仍按原逻辑判失败。
                     if (!canPromptForInput()) {
-                        this.bot.logger.error(
+                        if (this.bot.config.headless) {
+                            this.bot.logger.error(
+                                this.bot.isMobile,
+                                'LOGIN',
+                                '没有可用的非交互登录方式；邮箱验证码回退需要交互式终端输入'
+                            )
+                            return false
+                        }
+
+                        this.bot.logger.warn(
                             this.bot.isMobile,
                             'LOGIN',
-                            '没有可用的非交互登录方式；邮箱验证码回退需要交互式终端输入'
-
+                            `请在浏览器窗口里点「发送验证码到邮箱」并完成验证，最长等 ${this.manualEntrySeconds} 秒`
+                        )
+                        const outcome = await this.waitForOtpPageEnteredByUser(page)
+                        if (outcome === 'left-page') {
+                            this.bot.logger.info(this.bot.isMobile, 'LOGIN', '邮箱验证方式已选择或页面已跳转，继续后续流程')
+                            return true
+                        }
+                        this.bot.logger.warn(
+                            this.bot.isMobile,
+                            'LOGIN',
+                            `等了 ${this.manualEntrySeconds} 秒仍没看到页面跳转，尝试其他登录方式`
                         )
                         return false
                     }
@@ -778,6 +819,17 @@ export class Login {
                     'LOGIN',
                     `没有可用的受支持登录方式${ignoredMethods.length ? `；已忽略=${ignoredMethods.join(',')}` : ''}`
                 )
+                // 2026-11-21：还没到「无解」的地步。把窗口留给用户自己点，和 OTP / 邮箱验证码页
+                // 同一策略 —— GUI 用户永远没有交互式终端，不能一发现不认识就关窗口。
+                // 用户手动选完登录方式后，主循环会重新 detectCurrentState 继续往下走。
+                if (!this.bot.config.headless) {
+                    this.bot.logger.warn(this.bot.isMobile, 'LOGIN', '请在浏览器窗口里自行选择一个登录方式，最长等 180 秒')
+                    const outcome = await this.waitForOtpPageEnteredByUser(page)
+                    if (outcome === 'left-page') {
+                        this.bot.logger.info(this.bot.isMobile, 'LOGIN', '手动选择已完成或页面已跳转，继续后续流程')
+                        return true
+                    }
+                }
                 return false
             }
 
@@ -794,13 +846,35 @@ export class Login {
             // Verify your email - identical footer actions are validated by their resulting state, not position
             case 'EMAIL_VERIFICATION_INPUT': {
                 if (!account.password) {
+                    // 2026-11-23：同 SIGN_IN_METHOD_PICKER 那处 —— 账号没配密码 + GUI 没有终端时，
+                    // 原实现直接判死关窗口。但页面本身就是「验证你的邮箱」，用户完全可以自己
+                    // 收邮件、在浏览器里把码填进去。按页面状态等即可，headless 下仍按原逻辑失败。
                     if (!canPromptForInput()) {
-                        this.bot.logger.error(
+                        if (this.bot.config.headless) {
+                            this.bot.logger.error(
+                                this.bot.isMobile,
+                                'LOGIN',
+                                '邮箱验证需要已配置的密码或交互式终端输入'
+                            )
+                            return false
+                        }
+
+                        this.bot.logger.info(
                             this.bot.isMobile,
                             'LOGIN',
-                            '邮箱验证需要已配置的密码或交互式终端输入'
+                            `检测到邮箱验证页面 —— 请在浏览器窗口里填写邮件收到的验证码，最长等 ${this.manualEntrySeconds} 秒`
                         )
-                        return false
+                        const outcome = await this.waitForOtpPageEnteredByUser(page)
+                        if (outcome !== 'left-page') {
+                            this.bot.logger.warn(
+                                this.bot.isMobile,
+                                'LOGIN',
+                                `等了 ${this.manualEntrySeconds} 秒仍停留在邮箱验证页面，本次登录放弃`
+                            )
+                            return false
+                        }
+                        this.bot.logger.info(this.bot.isMobile, 'LOGIN', '邮箱验证已完成或页面已跳转，继续后续流程')
+                        return true
                     }
 
                     this.bot.logger.info(this.bot.isMobile, 'LOGIN', '检测到邮箱验证输入')

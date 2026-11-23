@@ -138,7 +138,14 @@ const WebhookSchema = z.object({
 export const ConfigSchema = z.object({
     sessionPath: z.string(),
     headless: z.boolean(),
-    browserChannel: z.enum(['chromium', 'chrome', 'msedge']).default('chromium'),
+    // 2026-11-21：发布模板里 browserChannel 留空，逼用户先在 GUI 里选一次浏览器。
+    // 用 preprocess 把空串/纯空白收成 undefined，再交给 .default('chromium')——
+    // 直接写 .default() 挡不住空串（空串是合法 string，只是不匹配 enum），
+    // 会在下面兜底循环里打一行 WARN 再替换，日志里出现莫名告警。
+    browserChannel: z.preprocess(
+        value => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+        z.enum(['chromium', 'chrome', 'msedge']).default('chromium')
+    ),
     clusters: z.number().int().nonnegative(),
     errorDiagnostics: z.boolean(),
     ensureStreakProtection: z.boolean(),

@@ -201,7 +201,10 @@ def get_simple(config: Dict[str, Any]) -> Dict[str, Any]:
         'humanize': bool(config.get('humanize', {}).get('enabled', False)),
         'skipNonPointTasks': bool(config.get('skipNonPointTasks', True)),
         'ensureStreakProtection': bool(config.get('ensureStreakProtection', True)),
-        'browserChannel': str(config.get('browserChannel', 'chromium')),
+        # 上游 2026.11.23.1：browserChannel 不再兜底成 'chromium'。
+        # 模板里默认留空，逼用户先选一次浏览器；空串是合法值，由界面显示「请选择」。
+        # 脚本侧 Validator 会用 preprocess 把空串收成 undefined 再落到 chromium。
+        'browserChannel': str(config.get('browserChannel') or ''),
         'workers': {key: bool(workers.get(key, False)) for key, _l, _t in WORKER_FIELDS},
         'delay_preset': detect_delay_preset(config),
     }
@@ -212,7 +215,7 @@ def apply_simple(config: Dict[str, Any], simple: Dict[str, Any]) -> Dict[str, An
     config['debugLogs'] = bool(simple.get('debugLogs', False))
     config['skipNonPointTasks'] = bool(simple.get('skipNonPointTasks', True))
     config['ensureStreakProtection'] = bool(simple.get('ensureStreakProtection', True))
-    config['browserChannel'] = str(simple.get('browserChannel', 'chromium'))
+    config['browserChannel'] = str(simple.get('browserChannel') or '')
     config.setdefault('humanize', {})['enabled'] = bool(simple.get('humanize', False))
     config.setdefault('workers', {}).update(simple.get('workers', {}))
     apply_delay_preset(config, simple.get('delay_preset', '自定义'))

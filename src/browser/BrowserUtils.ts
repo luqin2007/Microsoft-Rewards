@@ -217,11 +217,17 @@ export default class BrowserUtils {
 
             return true
         } catch (error) {
-            this.bot.logger.warn(
-                this.bot.isMobile,
-                'GHOST-CLICK',
-                `点击 ${selector} 失败: ${error instanceof Error ? error.message : String(error)}`
-            )
+            const message = error instanceof Error ? error.message : String(error)
+            // 2026-11-21：点击触发页面导航时，Playwright 会在「点击已经发出之后」去读取元素状态，
+            // 此时 JS 执行上下文已被导航销毁 → 抛 "Execution context was destroyed"。
+            // 这不是点击失败，而是点击生效的副作用。原先一律判 false，导致 KMSI「保持登录」
+            // 这类必然引发跳转的按钮被误判成失败，登录直接致命退出（用户重跑一次就成功，
+            // 因为 Cookie 其实已经种上了）。这里按「已生效」处理。
+            if (/Execution context was destroyed|most likely because of a navigation/i.test(message)) {
+                this.bot.logger.debug(this.bot.isMobile, 'GHOST-CLICK', `点击 ${selector} 已触发页面跳转（视为成功）`)
+                return true
+            }
+            this.bot.logger.warn(this.bot.isMobile, 'GHOST-CLICK', `点击 ${selector} 失败: ${message}`)
             return false
         }
     }

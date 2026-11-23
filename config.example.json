@@ -1,6 +1,6 @@
 {
     "sessionPath": "sessions",
-    "browserChannel": "chromium",
+    "browserChannel": "",
     "headless": false,
     "clusters": 1,
     "errorDiagnostics": false,
@@ -16,15 +16,15 @@
     "workers": {
         "doDailySet": true,
         "doClaimBonusPoints": true,
-        "doMorePromotions": true,
-        "doPunchCards": true,
-        "doAppPromotions": true,
+        "doMorePromotions": false,
+        "doPunchCards": false,
+        "doAppPromotions": false,
         "doDesktopSearch": true,
-        "doMobileSearch": true,
+        "doMobileSearch": false,
         "doBonusSearches": false,
         "doDailyCheckIn": true,
         "doReadToEarn": true,
-        "doActivateSearchPerk": true,
+        "doActivateSearchPerk": false,
         "doVisualSearch": false
     },
     "activities": {
