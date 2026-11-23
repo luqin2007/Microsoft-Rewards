@@ -193,3 +193,36 @@ eng.stop()                        # 进程树 + 独占的浏览器
 **给 UI 的建议**（与网关侧讨论结果一致）：UI 保留自有映射作为运行时主数据，
 本文档作为对账依据；不要运行时读这个文件——UI 是 PyInstaller 单文件包，
 依赖另一个目录的 Markdown 会多一个耦合点，且表格格式变动会让解析崩掉。
+
+### 7.1 与 UI 现有映射的精确差异（2026-11-23 核对）
+
+三方数据：`ui/logparse.py` 的 `_CODE_TITLE` **65 条** / 源码 TAG **107 个** /
+本轮在 VM 实际出现 **42 个**。
+
+#### UI 该删的 13 条（死映射：源码 11.11.1 与 23.1 两个版本里都不存在，永远不会命中）
+
+`CONTEXT-REFRESH-COOKIE-SEED`、`DAILY`、`EARN`、`ERROR`、`LOGIN-2FA`、`LOGIN-PASSKEY`、
+`REDEEM`、`SEARCH`、`SEARCH-COOKIE-CAPTURE`、`SEARCH-COOKIE-SEED`、`SEARCH-DESKTOP`、
+`SEARCH-MOBILE`、`STREAK`
+
+> 注意几个容易混淆的真实名：它是 `LOGIN-TOTP` 不是 `LOGIN-2FA`；是 `PUNCHCARD` 不是 `PUNCH-CARDS`；
+> 是 `EARN-SNAPSHOT` / `ENABLE-STREAK-PROTECTION`，没有裸的 `EARN` / `STREAK`；
+> 是 `ACCOUNT-ERROR` / `MAIN-ERROR`，没有裸的 `ERROR`；搜索相关只有 `SEARCH-BING` /
+> `SEARCH-MANAGER` / `SEARCH-CHINA-TRENDS` 等，没有裸 `SEARCH` 或按平台拆分的 `SEARCH-DESKTOP|MOBILE`。
+>
+> 一个永远命中不了的映射只是噪音，删掉比留着干净。
+
+#### UI 该补的 4 条（本轮真实出现过、但没有中文名，状态卡/时间线会显示英文）
+
+| TAG | 建议中文 |
+|---|---|
+| `ACTIVITY` | 活动执行 |
+| `BOOTSTRAP` | 引导积分页 |
+| `RUN-START` | 整轮启动 |
+| `UNCAUGHT-EXCEPTION` | 未捕获异常 |
+
+#### 其余 51 个源码 TAG
+
+本轮没有触发，UI 也没有映射 —— **按原样显示即可**，确认常用后再补。
+主要包括 `CLUSTER-*`、`LOGIN-*` 细分阶段（`LOGIN-TOTP` / `LOGIN-RECOVERY` / `LOGIN-PASSWORDLESS` …）、
+多源 `SEARCH-*`、`VISUAL-SEARCH-*`、`USERAGENT-*`、`*ERROR` 等。
