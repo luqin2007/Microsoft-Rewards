@@ -129,9 +129,21 @@ def process_created_epoch(pid: Optional[int]) -> Optional[float]:
 def pid_alive(pid: Optional[int]) -> bool:
     """进程是否还活着。
 
-    Windows 上不能用 ``os.kill(pid, 0)``：CPython 在 Windows 会把非
-    CTRL_C/CTRL_BREAK 的信号直接转成 TerminateProcess，等于把进程杀掉。
-    这里走 OpenProcess + GetExitCodeProcess。
+    **不要用 ``os.kill(pid, 0)`` 判存活，但它并不会杀进程** —— 这一点曾被误解
+    （包括本文件早先的注释）。``signal.CTRL_C_EVENT == 0``，所以 Windows 上
+    ``os.kill(pid, 0)`` 走的是 ``GenerateConsoleCtrlEvent(0, pid)``（广播 Ctrl+C），
+    不是 ``TerminateProcess``；实测对 node 子进程调用后它照样活着。
+    （CPython issue 14480 曾提议让 0 表示「探测存活」，被 rejected，理由正是
+     0 已经是 CTRL_C_EVENT。）
+
+    它真正坏在两个方向：
+      ① **刚死的进程仍报存活** —— ``p.kill()`` 之后同一 pid 立刻探测不抛异常
+         （句柄未回收），于是「已经跑完的一轮」被当成「还在跑」；
+      ② **权限不足报死** —— 探测更高权限的进程抛 ``winerror=5``，
+         被 ``except OSError`` 吞成「已死」。
+    两个方向都会让调用方判断错，所以这里改用
+    ``OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)`` + ``GetExitCodeProcess == 259``。
+    pid 被复用的情况另由 ``process_created_epoch()`` 的创建时间校验兜住。
     """
     if not pid or int(pid) <= 0:
         return False
