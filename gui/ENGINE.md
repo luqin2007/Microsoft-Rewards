@@ -72,6 +72,14 @@ eng.logs(after_seq=0, limit=200)  # 增量
 eng.stop()                        # 进程树 + 独占的浏览器
 ```
 
+> **关于 `native` 每次新建实例**：`gateway/adapters/mrs.py` 的 `native` property
+> 每访问一次就 `MrsEngine(MRS_ROOT)` 一次。引擎已针对这一点做了两处兜底：
+> `status()`/`stop()` 从 `run-state.json` + pid 存活判断（不依赖进程内句柄），
+> `logs()` 从落盘文件恢复。但 `_progress`（本次运行的内存进度）只存在于
+> 「start 的那个实例」里；若网关的 `/mrs/status` 走的是另一个实例，进度会回退到
+> 状态文件里的快照（同样是准的，只是不是逐秒更新）。若希望实时进度，
+> 网关侧应缓存实例（`self._native = MrsEngine(...)`），这是 gateway/ 的改动，MRS 不越界。
+
 `start()` 抛 `RuntimeError`（已在运行 / 无账号 / 找不到 node）或
 `ValueError`（scope 不是 `all` / `slot:N`、槽位不存在），网关直接映射成 409/400。
 
@@ -87,6 +95,6 @@ eng.stop()                        # 进程树 + 独占的浏览器
 | 项 | 说明 |
 |---|---|
 | **配置路径** | 引擎读写 `MRS_ROOT/config.json` 与 `MRS_ROOT/.env`。合并 2026.11.19 后 node 会把它们**复制**到 `%LOCALAPPDATA%\MRS助手`（按 mtime 单向同步：程序目录更新就覆盖过去），所以网关写程序目录那份也能生效。网关是唯一写入方（需求 §6）时不会打架 |
-| **日志只在内存** | 网关进程重启后 `logs()` 从空开始，`after_seq` 也随之重置；UI 需在重连时把 `afterSeq` 归零 |
+| **日志持久化** | `logs()` 先读内存环形缓冲，缓冲为空时从 `logs/engine-log.jsonl` 尾部恢复；每行同时追加到该文件。所以网关每次 `native` 新建实例、甚至网关重启后，`after_seq` 增量拉取仍然连续。`start()` 会把 seq 归零并重建该文件（网关据此判断「新一轮」） |
 | **浏览器清理是 best-effort** | `stop()` 会额外按命令行含 `ms-playwright/playwright/patchright` 清理 Chrome/Edge，只动 MRS 自己拉起的浏览器，不碰用户日常浏览器 |
 | **集群模式进度** | `clusters > 1` 时 `progress.total` 以 `RUN-END` 的"处理账户数"为准，账号边界事件来自各 worker 的 IPC 汇总，粒度到账号而非子任务 |

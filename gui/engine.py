@@ -138,6 +138,13 @@ class MrsEngine:
         self._logs: deque = deque(maxlen=max(200, int(log_buffer_size)))
         self._seq = 0
 
+        # 日志落盘：网关每次访问 adapter.native 都会新建一个 MrsEngine，
+        # 纯内存缓冲会让 logs() 永远返回空。这里把日志同时写到
+        # logs/engine-log.jsonl，新实例或网关重启后能接着增量拉取。
+        self.log_dir = os.path.join(self.root, 'logs')
+        self.log_path = os.path.join(self.log_dir, 'engine-log.jsonl')
+        self._log_loaded = False
+
         # 本次运行的进度（除运行中以外都保留最后一次的值，供终态展示）
         self._progress: Dict[str, Any] = {
             'scope': None,
@@ -167,6 +174,60 @@ class MrsEngine:
             return data if isinstance(data, dict) else {}
         except Exception:
             return {}
+
+    # ------------------------------------------------------------ 日志持久化
+
+    def _load_persisted_logs(self) -> None:
+        """把上一次运行（或上一个实例）的日志尾部读回内存缓冲。
+
+        网关每访问一次 ``native`` 就会 new 一个 MrsEngine，没有这一步的话
+        ``logs()`` 永远是空的。
+        """
+        if self._log_loaded:
+            return
+        self._log_loaded = True
+        try:
+            with open(self.log_path, encoding='utf-8', errors='replace') as fh:
+                raw_lines = fh.readlines()
+        except Exception:
+            return
+        tail = raw_lines[-self._logs.maxlen :]
+        with self._lock:
+            for raw in tail:
+                try:
+                    item = json.loads(raw)
+                except Exception:
+                    continue
+                seq = int(item.get('seq') or 0)
+                self._logs.append(
+                    {'seq': seq, 'level': item.get('level') or 'info', 'text': item.get('text') or ''}
+                )
+                self._seq = max(self._seq, seq)
+
+    def _persist_log(self, entry: Dict[str, Any]) -> None:
+        try:
+            os.makedirs(self.log_dir, exist_ok=True)
+            with open(self.log_path, 'a', encoding='utf-8') as fh:
+                fh.write(json.dumps(entry, ensure_ascii=False) + '\n')
+        except Exception:
+            pass
+
+    def _reset_log_sink(self) -> None:
+        """新一轮运行：清空内存缓冲、seq 归零、日志文件重建。
+
+        ``start()`` 把 seq 归零是网关用来判断「新一轮」的信号
+        （见 gateway/adapters/mrs.py 的 _last_max_seq），这里保持一致。
+        """
+        with self._lock:
+            self._logs.clear()
+            self._seq = 0
+        self._log_loaded = True
+        try:
+            os.makedirs(self.log_dir, exist_ok=True)
+            with open(self.log_path, 'w', encoding='utf-8'):
+                pass
+        except Exception:
+            pass
 
     def _running_pid(self) -> Optional[int]:
         """当前是否在跑：优先内存里的运行器，其次状态文件 + 进程存活。"""
@@ -317,8 +378,7 @@ class MrsEngine:
                 'pointsGained': 0,
                 'progress': {'done': 0, 'total': total},
             }
-            self._logs.clear()
-            self._seq = 0
+        self._reset_log_sink()
 
         started_at = _utc_now()
         self._write_state(
@@ -449,6 +509,7 @@ class MrsEngine:
 
     def logs(self, after_seq: int = 0, limit: int = 200) -> List[Dict[str, Any]]:
         """增量拉取日志。seq 单调递增，两次调用传上次的 lastSeq 即可不重复。"""
+        self._load_persisted_logs()
         with self._lock:
             items = [entry for entry in self._logs if entry['seq'] > int(after_seq)]
         return items[: max(1, int(limit))]
@@ -459,6 +520,7 @@ class MrsEngine:
             self._seq += 1
             entry = {'seq': self._seq, 'level': level, 'text': text}
             self._logs.append(entry)
+        self._persist_log(entry)
 
         parsed = LOG_LINE_RE.match(text)
         if not parsed:
