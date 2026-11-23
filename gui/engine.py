@@ -68,6 +68,58 @@ ACCOUNT_FIELD_ALIASES = {
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
+
+def process_created_epoch(pid: Optional[int]) -> Optional[float]:
+    """进程创建时间（Unix epoch 秒）；拿不到返回 None。
+
+    py 的进程被强杀时 ``_on_exit`` 没机会跑，``run-state.json`` 会留下僵尸 pid；
+    而 pid 是会被复用的 —— 单看 ``pid_alive`` 会把「别的进程恰好拿到这个号」
+    当成「本轮还在跑」。拿进程创建时间来区分。
+    """
+    if not pid or int(pid) <= 0 or os.name != 'nt':
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.GetProcessTimes.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(wintypes.FILETIME),
+            ctypes.POINTER(wintypes.FILETIME),
+            ctypes.POINTER(wintypes.FILETIME),
+            ctypes.POINTER(wintypes.FILETIME),
+        ]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not handle:
+            return None
+        try:
+            creation = wintypes.FILETIME()
+            exited = wintypes.FILETIME()
+            kernel_time = wintypes.FILETIME()
+            user_time = wintypes.FILETIME()
+            ok = kernel32.GetProcessTimes(
+                handle,
+                ctypes.byref(creation),
+                ctypes.byref(exited),
+                ctypes.byref(kernel_time),
+                ctypes.byref(user_time),
+            )
+            if not ok:
+                return None
+            ticks = (creation.dwHighDateTime << 32) | creation.dwLowDateTime
+            # FILETIME：自 1601-01-01 起的 100ns 计数
+            return ticks / 1e7 - 11644473600.0
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:
+        return None
+
 def pid_alive(pid: Optional[int]) -> bool:
     """进程是否还活着。
 
@@ -306,7 +358,8 @@ class MrsEngine:
         state = self._read_state()
         state_pid = state.get('pid')
         if state.get('state') == 'running' and pid_alive(state_pid):
-            return int(state_pid)
+            if self._pid_matches_run(state_pid, state.get('startedAt')):
+                return int(state_pid)
 
         with self._lock:
             runner = self._runner
@@ -315,6 +368,24 @@ class MrsEngine:
             if proc is not None and pid_alive(proc.pid):
                 return int(proc.pid)
         return None
+
+    def _pid_matches_run(self, pid: Optional[int], started_at: Optional[str]) -> bool:
+        """文件里那个 pid，是否真是「本轮」起的进程（防 pid 复用误判）。
+
+        * 没记 ``startedAt`` 或拿不到进程创建时间 → 不判死（宁可误报在跑，也别放行重复启动）
+        * 正常情况：进程创建时间略早于或等于 ``startedAt``（Popen 后立刻写状态）
+        * 若进程比 ``startedAt`` **晚 60 秒以上**才出现，只可能是旧 pid 被系统复用给了别人
+        """
+        if not started_at:
+            return True
+        created = process_created_epoch(pid)
+        if created is None:
+            return True
+        try:
+            started = datetime.fromisoformat(str(started_at)).timestamp()
+        except Exception:
+            return True
+        return created <= started + 60
 
     def _discard_stale_runner(self) -> None:
         """M-3 的配套：状态文件说没在跑，内存里却还挂着一个运行器 → 视为残留并清掉。
@@ -628,13 +699,11 @@ class MrsEngine:
         tag = (parsed.group('tag') or '').upper()
         msg = parsed.group('msg') or ''
         changed = False
-        touched = False
 
         # M-5：每一行都刷新「当前在做什么」和实时余额，让 updatedAt 不再停在启动时刻。
         with self._lock:
             if tag and self._progress.get('currentTask') != tag:
                 self._progress['currentTask'] = tag
-                touched = True
             self._progress['lastLogAt'] = _utc_now()
 
         balance_hit = LIVE_BALANCE_RE.search(msg) or BALANCE_RE.search(msg)
@@ -649,7 +718,6 @@ class MrsEngine:
                     if progress.get('balance') != live_balance:
                         progress['balance'] = live_balance
                         self._progress['progress'] = progress
-                        touched = True
 
         if tag == 'ACCOUNT-START':
             match = ACCOUNT_START_RE.search(msg)
@@ -694,8 +762,11 @@ class MrsEngine:
             with self._state_lock:
                 self._last_state_write = time.time()
             self._write_running_state()
-        elif touched:
-            # 普通业务行：节流落盘，避免逐行写文件
+        else:
+            # 普通业务行：节流落盘。
+            # 不依赖 TAG 变化 —— 同一条 TAG 上停留很久（例如一直在 FLOW 等待）时，
+            # currentTask/balance 可能都不变，但 lastLogAt 一直要动，
+            # 它是「引擎还活着」最直接的信号。节流本身已经是廉价的时间比较。
             self._write_state_throttled(3.0)
 
     def _on_exit(self, code: int) -> None:
