@@ -35,6 +35,12 @@ import runner as mr
 
 STATE_NAME = 'run-state.json'
 
+# 引擎日志文件（logs/engine-log.jsonl）的自我保护参数。
+# 2026-11-23 VM 上撞过一次：debugLogs=true 时 node 一侧 7 分钟输出 105MB，
+# 每行 open/close 根本跟不上，最终把 stdout 读线程拖垮。
+LOG_MAX_BYTES = 64 * 1024 * 1024       # 单文件上限，超过就轮转成 .1
+LOG_TAIL_READ_BYTES = 2 * 1024 * 1024  # 新实例恢复缓冲时只读尾部这么多，不读整个文件
+
 # 日志行固定格式：[时间] [账号] [LEVEL] 平台 [TAG] 正文
 LOG_LINE_RE = re.compile(
     r'^\[[^\]]*\]\s*\[[^\]]*\]\s*\[(?P<level>INFO|WARN|ERROR|DEBUG)\]\s*'
@@ -200,6 +206,9 @@ class MrsEngine:
         self.log_dir = os.path.join(self.root, 'logs')
         self.log_path = os.path.join(self.log_dir, 'engine-log.jsonl')
         self._log_loaded = False
+        # 长驻句柄：每行 open/close 在高日志量下会把读取线程拖死（见 LOG_MAX_BYTES 注释）
+        self._log_fh = None
+        self._log_size = 0
 
         # 本次运行的进度（除运行中以外都保留最后一次的值，供终态展示）
         self._progress: Dict[str, Any] = {
@@ -295,21 +304,26 @@ class MrsEngine:
         """把上一次运行（或上一个实例）的日志尾部读回内存缓冲。
 
         网关每访问一次 ``native`` 就会 new 一个 MrsEngine，没有这一步的话
-        ``logs()`` 永远是空的。
+        ``logs()`` 永远是空的。只读文件尾部：崩过一次之后这文件可能是几百 MB，
+        全量读会把网关卡住。
         """
         if self._log_loaded:
             return
         self._log_loaded = True
         try:
-            with open(self.log_path, encoding='utf-8', errors='replace') as fh:
-                raw_lines = fh.readlines()
+            size = os.path.getsize(self.log_path)
+            with open(self.log_path, 'rb') as fh:
+                if size > LOG_TAIL_READ_BYTES:
+                    fh.seek(size - LOG_TAIL_READ_BYTES)
+                    fh.readline()  # 丢掉可能被截断的首行
+                raw = fh.read().decode('utf-8', errors='replace')
         except Exception:
             return
-        tail = raw_lines[-self._logs.maxlen :]
+        tail = raw.splitlines()[-self._logs.maxlen :]
         with self._lock:
-            for raw in tail:
+            for line in tail:
                 try:
-                    item = json.loads(raw)
+                    item = json.loads(line)
                 except Exception:
                     continue
                 seq = int(item.get('seq') or 0)
@@ -318,13 +332,52 @@ class MrsEngine:
                 )
                 self._seq = max(self._seq, seq)
 
+    def _close_log_sink(self) -> None:
+        fh = self._log_fh
+        self._log_fh = None
+        if fh is not None:
+            try:
+                fh.close()
+            except Exception:
+                pass
+
     def _persist_log(self, entry: Dict[str, Any]) -> None:
+        """把一行日志追加到 logs/engine-log.jsonl。
+
+        * ``debug`` 级别不落盘 —— 打开 debugLogs 时它占了 90% 以上的量，
+          真正排查用到的还是 info 及以上；内存缓冲里仍然保留。
+        * 长驻文件句柄，不逐行 open/close。
+        * 超过 ``LOG_MAX_BYTES`` 轮转成 ``.1``，只留最近一份，避免无限增长。
+        """
+        if entry.get('level') == 'debug':
+            return
         try:
-            os.makedirs(self.log_dir, exist_ok=True)
-            with open(self.log_path, 'a', encoding='utf-8') as fh:
-                fh.write(json.dumps(entry, ensure_ascii=False) + '\n')
+            line = json.dumps(entry, ensure_ascii=False) + '\n'
+            payload = line.encode('utf-8', errors='replace')
+            if self._log_fh is None:
+                os.makedirs(self.log_dir, exist_ok=True)
+                self._log_fh = open(self.log_path, 'a', encoding='utf-8')
+                try:
+                    self._log_size = os.path.getsize(self.log_path)
+                except OSError:
+                    self._log_size = 0
+            if self._log_size + len(payload) > LOG_MAX_BYTES:
+                self._close_log_sink()
+                rotated = self.log_path + '.1'
+                try:
+                    if os.path.exists(rotated):
+                        os.remove(rotated)
+                    os.replace(self.log_path, rotated)
+                except Exception:
+                    pass
+                self._log_fh = open(self.log_path, 'w', encoding='utf-8')
+                self._log_size = 0
+            self._log_fh.write(line)
+            self._log_size += len(payload)
+            self._log_fh.flush()
         except Exception:
-            pass
+            # 磁盘满 / 权限问题：关掉句柄下次重开，绝不把异常抛给日志回调
+            self._close_log_sink()
 
     def _reset_log_sink(self) -> None:
         """新一轮运行：清空内存缓冲、seq 归零、日志文件重建。
@@ -336,12 +389,14 @@ class MrsEngine:
             self._logs.clear()
             self._seq = 0
         self._log_loaded = True
+        self._close_log_sink()
         try:
             os.makedirs(self.log_dir, exist_ok=True)
             with open(self.log_path, 'w', encoding='utf-8'):
                 pass
+            self._log_size = 0
         except Exception:
-            pass
+            self._log_size = 0
 
     def _running_pid(self) -> Optional[int]:
         """当前在跑的是谁。
@@ -693,14 +748,37 @@ class MrsEngine:
         return items[: max(1, int(limit))]
 
     def _on_line(self, text: str) -> None:
-        level = mr.classify(text)
+        """stdout 回调入口。任何解析/落盘异常都不许外泄。
+
+        ``runner._pump`` 已经对单行回调做了兜底，这里是第二道保险 ——
+        这一层出问题同样会连带整个任务，而一类日志解析失败没有理由杀任务。
+        """
+        try:
+            self._handle_line(text)
+        except Exception:
+            pass
+
+    def _handle_line(self, text: str) -> None:
+        parsed = LOG_LINE_RE.match(text)
+        # 级别取值：日志行自带的 [DEBUG]/[WARN]/[ERROR] 优先
+        # （runner.classify 只认 error/warn/ok，会把 DEBUG 一律当 info，
+        #   debugLogs 打开时这些行会把日志文件撑爆 —— 2026-11-23 撞过一次）
+        declared = (parsed.group('level') or '').upper() if parsed else ''
+        if declared == 'DEBUG':
+            level = 'debug'
+        elif declared == 'ERROR':
+            level = 'error'
+        elif declared == 'WARN':
+            level = 'warn'
+        else:
+            level = mr.classify(text)
+
         with self._lock:
             self._seq += 1
             entry = {'seq': self._seq, 'level': level, 'text': text}
             self._logs.append(entry)
         self._persist_log(entry)
 
-        parsed = LOG_LINE_RE.match(text)
         if not parsed:
             return
         tag = (parsed.group('tag') or '').upper()
@@ -778,6 +856,7 @@ class MrsEngine:
 
     def _on_exit(self, code: int) -> None:
         self._stop_heartbeat()
+        self._close_log_sink()
         self._write_state(
             {
                 'state': 'idle',

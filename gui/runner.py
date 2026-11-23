@@ -117,8 +117,16 @@ class BotRunner:
             return
         try:
             for line in iter(proc.stdout.readline, ''):
-                if self.on_line:
+                if not self.on_line:
+                    continue
+                try:
                     self.on_line(strip_ansi(line.rstrip('\r\n')))
+                except Exception:
+                    # 单行回调出错**绝不能**带走整个读取循环：
+                    # 循环一旦退出，finally 会关闭 stdout，node 那边继续写就会
+                    # EPIPE 刷屏、未捕获异常直接退出（2026-11-23 VM 实撞过一次）。
+                    # 丢一行日志远好过丢掉整轮任务。
+                    continue
         except (ValueError, OSError):
             pass
         finally:
