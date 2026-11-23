@@ -85,10 +85,27 @@ eng.stop()                        # 进程树 + 独占的浏览器
 
 ## 5. `run-state.json` 扩展字段
 
-保持原有格式，追加：`scope`、`currentAccount`、`pointsGained`、
-`progress{done,total,failed?,balance?}`、`updatedAt`。
+保持原有格式，追加：
 
-终态（idle）同样保留最后一次的 `progress` / `pointsGained`，UI 跑完还能看到结果。
+| 字段 | 何时更新 | 用途 |
+|---|---|---|
+| `scope` | 启动时 | `all` / `slot:N` |
+| `currentAccount` | 进入账号时；`RUN-END` 清空 | 当前处理谁（**已脱敏**） |
+| `currentTask` | 每条业务日志（TAG 变化时） | 当前在做什么，如 `READ-TO-EARN` / `URL-REWARD` |
+| `pointsGained` | 账号结束时累加；`RUN-END` 校准 | 本次累计获得 |
+| `progress.done/total` | 账号结束 / 启动 | 进度条 |
+| `progress.failed/balance` | `RUN-END`（`balance` 也会从业务行实时更新） | 失败数 / 当前余额 |
+| `lastLogAt` | 每条日志 | 判断日志是否还在推进（区别于 `updatedAt`） |
+| `updatedAt` | 心跳（每 10 秒）+ 事件 | 状态新鲜度；UI 可用它做「可能卡住」判断 |
+
+写盘策略：账号级事件（`ACCOUNT-START/END/SKIP`、`RUN-END`）**立即写**；普通业务行**节流 3 秒**；
+另有心跳线程每 10 秒刷一次 `updatedAt`——单个账号动辄十几分钟，不这么做 UI 会以为卡死。
+
+终态（idle）同样保留最后一次的 `progress` / `pointsGained` / `currentTask`，UI 跑完还能看到结果。
+
+**`status()` 的 pid 语义**：以 `run-state.json` 为准（文件说 running 且该 pid 存活才认），
+内存里的运行器只作补充。原因是网关每次访问 `native` 都会新建一个 `MrsEngine`，
+「内存里有 runner」不代表它就是在跑的那一个。
 
 ## 6. 已知限制
 
