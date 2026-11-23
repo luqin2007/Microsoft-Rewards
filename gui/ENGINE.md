@@ -95,7 +95,7 @@ eng.stop()                        # 进程树 + 独占的浏览器
 | `pointsGained` | 账号结束时累加；`RUN-END` 校准 | 本次累计获得 |
 | `progress.done/total` | 账号结束 / 启动 | 进度条 |
 | `progress.failed/balance` | `RUN-END`（`balance` 也会从业务行实时更新） | 失败数 / 当前余额 |
-| `lastLogAt` | 每条日志 | 判断日志是否还在推进（区别于 `updatedAt`） |
+| `lastLogAt` | 每条日志 | 判断日志是否还在推进（区别于 `updatedAt`）。**建议消费方用它算 `logAgeSec` 并给较大阈值（600 秒）**：`[FLOW] 大任务间隔等待` 实测出现过 234 秒，90 秒级别的阈值会把正常等待误报成卡死 |
 | `updatedAt` | 心跳（每 10 秒）+ 事件 | 状态新鲜度；UI 可用它做「可能卡住」判断 |
 
 写盘策略：账号级事件（`ACCOUNT-START/END/SKIP`、`RUN-END`）**立即写**；普通业务行**节流 3 秒**；
@@ -106,6 +106,11 @@ eng.stop()                        # 进程树 + 独占的浏览器
 **`status()` 的 pid 语义**：以 `run-state.json` 为准（文件说 running 且该 pid 存活才认），
 内存里的运行器只作补充。原因是网关每次访问 `native` 都会新建一个 `MrsEngine`，
 「内存里有 runner」不代表它就是在跑的那一个。
+
+**`startedAt` 的语义**：本轮**进程**的启动时刻，取自 `Popen` 之后，与进程真实创建时间差 < 200ms
+（PID 占位那次写的是 `null`）。消费方可以用「进程创建时间 ≈ `startedAt`」判断 pid 有没有被系统复用：
+两边差超过 5 秒即视为 `pid` 不属于本轮。拿不到创建时间或 `startedAt` 为空时，**一律按在跑处理**——
+误报在跑比放行重复启动安全（后者会让两份引擎抢同一批账号）。
 
 ## 6. 已知限制
 
