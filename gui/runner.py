@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 """Run the built bot (node dist/index.js) as a child process and stream output."""
 
-from __future__ import annotations
-
 import json
 import os
 import re
@@ -26,10 +24,8 @@ EMAIL_RE = re.compile(r'[\w.+-]+@[\w-]+\.[\w.-]+')
 # GUI 与外部只读 API 之间的状态约定：GUI 是唯一写入方，API 只读。
 STATE_NAME = 'run-state.json'
 
-
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
 
 def _write_state(payload: Dict) -> None:
     """原子写 run-state.json；任何失败都静默，绝不阻塞任务。"""
@@ -42,10 +38,8 @@ def _write_state(payload: Dict) -> None:
     except Exception:  # noqa: BLE001 - 状态文件写失败不能影响运行
         pass
 
-
 def strip_ansi(text: str) -> str:
     return ANSI_RE.sub('', text)
-
 
 def classify(line: str) -> str:
     upper = line.upper()
@@ -56,7 +50,6 @@ def classify(line: str) -> str:
     if '成功' in line or 'COLLECTED' in upper or 'POINTSGAINED' in upper:
         return 'ok'
     return 'info'
-
 
 class BotRunner:
     """Thin subprocess wrapper with line callbacks."""
@@ -159,13 +152,11 @@ class BotRunner:
         else:
             proc.terminate()
 
-
 def app_root() -> str:
     """Project root, valid for both `python gui/app.py` and a frozen exe."""
     if getattr(sys, 'frozen', False):
         return os.path.dirname(os.path.abspath(sys.executable))
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
 
 def detect_node() -> str:
     """Node next to the app first, then the portable copy, then whatever is on PATH."""
@@ -196,7 +187,6 @@ def detect_node() -> str:
     from shutil import which
 
     return which('node') or which('node.exe') or ''
-
 
 def detect_system_chrome() -> str:
     """Path to an installed Google Chrome, or '' when absent.

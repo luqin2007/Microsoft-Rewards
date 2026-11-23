@@ -94,6 +94,7 @@ eng.stop()                        # 进程树 + 独占的浏览器
 
 | 项 | 说明 |
 |---|---|
+| **不要在 gui/ 的模块里写 `from __future__ import annotations`** | 这些文件是给网关的 **frozen（PyInstaller）进程**在运行时从磁盘 import 的。实测：frozen 宿主若没把 `__future__` 打进去，加载带该语句的外部模块会直接 `ModuleNotFoundError: No module named '__future__'`。四个文件已全部去掉；将来加回来前先确认宿主补了 `hiddenimports=['__future__']` |
 | **配置路径** | 引擎读写 `MRS_ROOT/config.json` 与 `MRS_ROOT/.env`。合并 2026.11.19 后 node 会把它们**复制**到 `%LOCALAPPDATA%\MRS助手`（按 mtime 单向同步：程序目录更新就覆盖过去），所以网关写程序目录那份也能生效。网关是唯一写入方（需求 §6）时不会打架 |
 | **日志持久化** | `logs()` 先读内存环形缓冲，缓冲为空时从 `logs/engine-log.jsonl` 尾部恢复；每行同时追加到该文件。所以网关每次 `native` 新建实例、甚至网关重启后，`after_seq` 增量拉取仍然连续。`start()` 会把 seq 归零并重建该文件（网关据此判断「新一轮」） |
 | **浏览器清理是 best-effort** | `stop()` 会额外按命令行含 `ms-playwright/playwright/patchright` 清理 Chrome/Edge，只动 MRS 自己拉起的浏览器，不碰用户日常浏览器 |

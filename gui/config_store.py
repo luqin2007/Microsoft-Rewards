@@ -6,8 +6,6 @@ actually change day-to-day; everything else is loaded, left untouched, and
 written back verbatim.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import shutil
@@ -105,7 +103,6 @@ DELAY_HINTS: Dict[str, str] = {
     '极慢': '约 3 小时，通常跑不完 —— 这是本 fork 示例配置里的原值。',
 }
 
-
 def _norm_visit(value: Any) -> Optional[str]:
     """searchResultVisitTime accepts a number or a duration string."""
     if value is None:
@@ -113,7 +110,6 @@ def _norm_visit(value: Any) -> Optional[str]:
     if isinstance(value, (int, float)):
         return '%gsec' % value
     return str(value)
-
 
 def _delay_signature(config: Dict[str, Any]) -> Dict[str, Any]:
     ss = config.get('searchSettings', {}) or {}
@@ -123,14 +119,12 @@ def _delay_signature(config: Dict[str, Any]) -> Dict[str, Any]:
         'searchResultVisitTime': _norm_visit(ss.get('searchResultVisitTime')),
     }
 
-
 def detect_delay_preset(config: Dict[str, Any]) -> str:
     sig = _delay_signature(config)
     for name in DELAY_ORDER:
         if sig == _delay_signature({'searchSettings': DELAY_PRESETS[name]}):
             return name
     return '自定义'
-
 
 def apply_delay_preset(config: Dict[str, Any], preset: str) -> Dict[str, Any]:
     """'自定义' is a no-op on purpose - it keeps whatever is already in config."""
@@ -140,10 +134,8 @@ def apply_delay_preset(config: Dict[str, Any], preset: str) -> Dict[str, Any]:
             ss[key] = value
     return config
 
-
 def _bool_map(workers: Dict[str, Any]) -> Dict[str, bool]:
     return {key: bool(workers.get(key, False)) for key, _l, _t in WORKER_FIELDS}
-
 
 def load(path: str, example_path: str = '') -> Dict[str, Any]:
     """Load config.json, back-filling any missing keys from config.example.json."""
@@ -155,7 +147,6 @@ def load(path: str, example_path: str = '') -> Dict[str, Any]:
     config.setdefault('workers', {})
     return config
 
-
 def _read_json(path: str) -> Dict[str, Any]:
     try:
         with open(path, 'r', encoding='utf-8') as fh:
@@ -163,7 +154,6 @@ def _read_json(path: str) -> Dict[str, Any]:
         return data if isinstance(data, dict) else {}
     except (OSError, json.JSONDecodeError):
         return {}
-
 
 def _deep_merge(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(base)
@@ -173,7 +163,6 @@ def _deep_merge(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
         else:
             out[key] = value
     return out
-
 
 def save(path: str, config: Dict[str, Any]) -> None:
     try:
@@ -186,7 +175,6 @@ def save(path: str, config: Dict[str, Any]) -> None:
         fh.write('\n')
     os.replace(tmp, path)
 
-
 def detect_preset(config: Dict[str, Any]) -> str:
     current = _bool_map(config.get('workers', {}))
     for name in PRESET_ORDER:
@@ -194,16 +182,13 @@ def detect_preset(config: Dict[str, Any]) -> str:
             return name
     return '自定义'
 
-
 def apply_preset(config: Dict[str, Any], preset: str) -> Dict[str, Any]:
     if preset in PRESET_WORKERS:
         config.setdefault('workers', {}).update(PRESET_WORKERS[preset])
     return config
 
-
 def set_worker(config: Dict[str, Any], key: str, value: bool) -> None:
     config.setdefault('workers', {})[key] = value
-
 
 # --- simple top-level knobs -------------------------------------------------
 
@@ -220,7 +205,6 @@ def get_simple(config: Dict[str, Any]) -> Dict[str, Any]:
         'workers': {key: bool(workers.get(key, False)) for key, _l, _t in WORKER_FIELDS},
         'delay_preset': detect_delay_preset(config),
     }
-
 
 def apply_simple(config: Dict[str, Any], simple: Dict[str, Any]) -> Dict[str, Any]:
     config['headless'] = bool(simple.get('headless', False))

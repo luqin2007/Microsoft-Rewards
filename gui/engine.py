@@ -18,8 +18,6 @@ run-state.json。设计约束见 `需求-MRS引擎.md`：
   presets()           任务开关/档位元数据，UI 不用硬编码中文
 """
 
-from __future__ import annotations
-
 import json
 import os
 import re
@@ -65,10 +63,8 @@ ACCOUNT_FIELD_ALIASES = {
     'save_fingerprint_desktop': 'SAVE_FINGERPRINT_DESKTOP',
 }
 
-
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
 
 def pid_alive(pid: Optional[int]) -> bool:
     """进程是否还活着。
@@ -111,7 +107,6 @@ def pid_alive(pid: Optional[int]) -> bool:
             kernel32.CloseHandle(handle)
     except Exception:
         return False
-
 
 class MrsEngine:
     """网关调用入口。一个进程内持有一个实例即可。"""

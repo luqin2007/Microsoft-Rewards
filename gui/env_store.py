@@ -11,8 +11,6 @@ Design rules (mirrors scripts/api/envEditor.js):
   * Every write creates ``.env.bak`` first.
 """
 
-from __future__ import annotations
-
 import os
 import re
 import shutil
@@ -44,7 +42,6 @@ SECRET_FIELDS = {'PASSWORD', 'TOTP_SECRET', 'PROXY_PASSWORD'}
 # Values copied straight from env.example are templates, not real accounts.
 _PLACEHOLDER_RE = re.compile(r'@(example|test)\.(com|org)$', re.IGNORECASE)
 
-
 @dataclass
 class EnvLine:
     raw: str
@@ -54,13 +51,11 @@ class EnvLine:
     commented: bool = False
     lead: str = ''
 
-
 def _split_value(raw_value: str) -> str:
     value = raw_value.strip()
     if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
         value = value[1:-1]
     return value
-
 
 def load(path: str) -> List[EnvLine]:
     if not os.path.exists(path):
@@ -89,7 +84,6 @@ def load(path: str) -> List[EnvLine]:
         )
     return lines
 
-
 def write(path: str, lines: List[EnvLine]) -> None:
     text = '\n'.join(item.raw for item in lines)
     if not text.endswith('\n'):
@@ -103,11 +97,9 @@ def write(path: str, lines: List[EnvLine]) -> None:
         fh.write(text)
     os.replace(tmp, path)
 
-
 def all_slots(lines: List[EnvLine]) -> List[int]:
     found = {item.slot for item in lines if item.slot is not None}
     return sorted(found)
-
 
 def _find(lines: List[EnvLine], slot: int, name: str, prefer_uncommented: bool = True) -> Optional[int]:
     commented_hit: Optional[int] = None
@@ -122,7 +114,6 @@ def _find(lines: List[EnvLine], slot: int, name: str, prefer_uncommented: bool =
             commented_hit = index
     return commented_hit
 
-
 def get_value(lines: List[EnvLine], slot: int, name: str) -> Optional[str]:
     """Effective value, or None when unset / commented out."""
     index = _find(lines, slot, name, prefer_uncommented=True)
@@ -133,7 +124,6 @@ def get_value(lines: List[EnvLine], slot: int, name: str) -> Optional[str]:
         return None
     return item.value
 
-
 def raw_value(lines: List[EnvLine], slot: int, name: str) -> Optional[str]:
     """Value ignoring the commented flag - used to build child-process env."""
     index = _find(lines, slot, name, prefer_uncommented=True)
@@ -141,12 +131,10 @@ def raw_value(lines: List[EnvLine], slot: int, name: str) -> Optional[str]:
         return None
     return lines[index].value or None
 
-
 def _render(slot: int, name: str, value: str, commented: bool, lead: str) -> str:
     indent = re.match(r'^\s*', lead).group(0)
     prefix = indent + '#' if commented else ''
     return f'{prefix}ACCOUNT_{slot}_{name}={value}'
-
 
 def list_accounts(path: str) -> List[Dict]:
     """Safe account summaries - secrets are reduced to ``has_*`` flags."""
@@ -175,7 +163,6 @@ def list_accounts(path: str) -> List[Dict]:
         )
     return accounts
 
-
 def next_free_slot(path: str) -> int:
     """Lowest positive slot that is not currently in use."""
     used = {item['slot'] for item in list_accounts(path)}
@@ -183,7 +170,6 @@ def next_free_slot(path: str) -> int:
     while slot in used:
         slot += 1
     return slot
-
 
 def upsert_account(path: str, slot: int, data: Dict[str, Optional[str]]) -> None:
     """Create or update one account slot.
@@ -223,7 +209,6 @@ def upsert_account(path: str, slot: int, data: Dict[str, Optional[str]]) -> None
 
     write(path, lines)
 
-
 def delete_account(path: str, slot: int) -> bool:
     """Comment out every line of one slot. Returns True when something changed."""
     lines = load(path)
@@ -237,7 +222,6 @@ def delete_account(path: str, slot: int) -> bool:
     if changed:
         write(path, lines)
     return changed
-
 
 def child_env_for_slot(path: str, slot: Optional[int]) -> Dict[str, str]:
     """Environment overrides that make the bot run exactly one account.
