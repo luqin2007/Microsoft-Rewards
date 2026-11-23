@@ -43,6 +43,8 @@ LOG_LINE_RE = re.compile(
 ACCOUNT_START_RE = re.compile(r'开始处理账户:\s*([^\s|]+)')
 GAINED_RE = re.compile(r'获得积分=(-?\d+)')
 BALANCE_RE = re.compile(r'现余额=(\d+)')
+# 业务行（领取/UrlReward/签到…）里带的是 currentBalance=<最新余额>，用它做实时余额
+LIVE_BALANCE_RE = re.compile(r'currentBalance=(\d+)')
 ACCOUNTS_DONE_RE = re.compile(r'处理账户数=(\d+)')
 FAILED_RE = re.compile(r'失败账户数=(\d+)')
 
@@ -133,6 +135,13 @@ class MrsEngine:
         self._logs: deque = deque(maxlen=max(200, int(log_buffer_size)))
         self._seq = 0
 
+        # 心跳：M-5 —— 之前只在账号切换时写 run-state.json，一个账号要跑十几分钟，
+        # 期间 updatedAt 不动，UI 会以为卡住了。这里每 10 秒至少刷一次。
+        self._hb_stop = threading.Event()
+        self._hb_thread: Optional[threading.Thread] = None
+        self._last_state_write = 0.0
+        self._state_lock = threading.Lock()
+
         # 日志落盘：网关每次访问 adapter.native 都会新建一个 MrsEngine，
         # 纯内存缓冲会让 logs() 永远返回空。这里把日志同时写到
         # logs/engine-log.jsonl，新实例或网关重启后能接着增量拉取。
@@ -161,6 +170,64 @@ class MrsEngine:
             os.replace(tmp, self.state_path)
         except Exception:
             pass
+
+    # -------------------------------------------------- 运行中状态刷新（M-5）
+
+    def _write_running_state(self) -> None:
+        """把当前进度写进 run-state.json（只有确实在跑时才写）。"""
+        pid = self._running_pid()
+        if not pid:
+            return
+        state = self._read_state()
+        self._write_state(
+            {
+                'state': 'running',
+                'pid': pid,
+                'startedAt': state.get('startedAt'),
+                'entry': 'dist/index.js',
+                'cwd': self.root,
+                **self._snapshot(),
+            }
+        )
+
+    def _write_state_throttled(self, min_interval: float = 3.0) -> None:
+        """日志驱动的高频更新：最多每 min_interval 秒落一次盘，避免逐行写文件。"""
+        now = time.time()
+        with self._state_lock:
+            if now - self._last_state_write < min_interval:
+                return
+            self._last_state_write = now
+        self._write_running_state()
+
+    def _start_heartbeat(self, interval: float = 10.0) -> None:
+        """每 interval 秒刷一次 updatedAt。
+
+        M-5：单个账号可能要跑十几分钟，期间没有任何账号切换事件，若只在事件时写，
+        ``updatedAt`` 会一直停在启动时刻，UI 看着像卡死。
+        """
+        self._stop_heartbeat()
+        self._hb_stop = threading.Event()
+        stop_event = self._hb_stop
+
+        def loop() -> None:
+            while not stop_event.wait(interval):
+                try:
+                    self._write_running_state()
+                except Exception:
+                    pass
+
+        thread = threading.Thread(target=loop, daemon=True)
+        thread.start()
+        self._hb_thread = thread
+
+    def _stop_heartbeat(self) -> None:
+        event = self._hb_stop
+        if event is not None:
+            event.set()
+        thread = self._hb_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=1.0)
+        self._hb_thread = None
 
     def _read_state(self) -> Dict[str, Any]:
         try:
@@ -225,18 +292,50 @@ class MrsEngine:
             pass
 
     def _running_pid(self) -> Optional[int]:
-        """当前是否在跑：优先内存里的运行器，其次状态文件 + 进程存活。"""
+        """当前在跑的是谁。
+
+        以 ``run-state.json`` 为准，内存里的运行器只作补充：
+
+        * M-3：网关每次访问 ``native`` 都会 new 一个 MrsEngine。上一轮的 node 进程
+          没退干净时，旧实例的内存 runner 还「活着」，但真正在跑的是另一个 pid
+          （网关 fallback 自己 Popen 的，或新一轮的）。旧实现优先返回内存 pid，
+          于是 status() 报出上一轮的 pid，甚至把正在跑的一轮报成 idle。
+        * 所以先看文件：文件说 running 且该 pid 存活 → 就是它（文件比内存新）。
+        * 文件说没跑，但内存 runner 确实还活着（刚 start、状态还没落盘）→ 用内存的。
+        """
+        state = self._read_state()
+        state_pid = state.get('pid')
+        if state.get('state') == 'running' and pid_alive(state_pid):
+            return int(state_pid)
+
         with self._lock:
             runner = self._runner
         if runner is not None and runner.running:
             proc = runner.proc
-            return int(proc.pid) if proc is not None else None
-        state = self._read_state()
-        if state.get('state') == 'running':
-            pid = state.get('pid')
-            if pid_alive(pid):
-                return int(pid)
+            if proc is not None and pid_alive(proc.pid):
+                return int(proc.pid)
         return None
+
+    def _discard_stale_runner(self) -> None:
+        """M-3 的配套：状态文件说没在跑，内存里却还挂着一个运行器 → 视为残留并清掉。
+
+        否则「上一轮 node 进程不退」会让下一次 start() 直接抛「已有任务在运行」，
+        网关只好 fallback 自己 Popen，两份进程同时写同一个 run-state.json。
+        """
+        with self._lock:
+            stale = self._runner
+            if stale is None:
+                return
+            self._runner = None
+        # 关键：先摘掉旧轮次的回调，否则它退出时会写一份 idle/旧进度，
+        # 把本轮的 running 状态覆盖掉。
+        stale.on_line = None
+        stale.on_exit = None
+        if stale.running:
+            try:
+                stale.stop()
+            except Exception:
+                pass
 
     def _resolve_node(self) -> str:
         if self._node_hint and os.path.isfile(self._node_hint):
@@ -340,6 +439,9 @@ class MrsEngine:
         if self._running_pid():
             raise RuntimeError('已有任务在运行')
 
+        # 状态文件说没在跑，但内存里可能还挂着上一轮的孤儿运行器（M-3/M-4）
+        self._discard_stale_runner()
+
         slot: Optional[int] = None
         norm = (scope or 'all').strip().lower()
         if norm not in ('', 'all'):
@@ -370,6 +472,7 @@ class MrsEngine:
             self._progress = {
                 'scope': 'all' if slot is None else f'slot:{slot}',
                 'currentAccount': None,
+                'currentTask': None,
                 'pointsGained': 0,
                 'progress': {'done': 0, 'total': total},
             }
@@ -407,6 +510,7 @@ class MrsEngine:
                 **self._snapshot(),
             }
         )
+        self._start_heartbeat()
         return {'pid': pid, 'scope': self._snapshot().get('scope'), 'total': total}
 
     def stop(self, *, cleanup_browser: bool = True) -> None:
@@ -419,6 +523,7 @@ class MrsEngine:
         with self._lock:
             runner = self._runner
 
+        self._stop_heartbeat()
         pid = self._running_pid()
         if runner is not None and runner.running:
             runner.stop()
@@ -523,6 +628,28 @@ class MrsEngine:
         tag = (parsed.group('tag') or '').upper()
         msg = parsed.group('msg') or ''
         changed = False
+        touched = False
+
+        # M-5：每一行都刷新「当前在做什么」和实时余额，让 updatedAt 不再停在启动时刻。
+        with self._lock:
+            if tag and self._progress.get('currentTask') != tag:
+                self._progress['currentTask'] = tag
+                touched = True
+            self._progress['lastLogAt'] = _utc_now()
+
+        balance_hit = LIVE_BALANCE_RE.search(msg) or BALANCE_RE.search(msg)
+        if balance_hit:
+            try:
+                live_balance = int(balance_hit.group(1))
+            except (TypeError, ValueError):
+                live_balance = None
+            if live_balance is not None:
+                with self._lock:
+                    progress = dict(self._progress.get('progress') or {})
+                    if progress.get('balance') != live_balance:
+                        progress['balance'] = live_balance
+                        self._progress['progress'] = progress
+                        touched = True
 
         if tag == 'ACCOUNT-START':
             match = ACCOUNT_START_RE.search(msg)
@@ -563,16 +690,16 @@ class MrsEngine:
             changed = True
 
         if changed:
-            self._write_state(
-                {
-                    'state': 'running' if self._running_pid() else 'idle',
-                    'pid': self._running_pid(),
-                    'startedAt': self._read_state().get('startedAt'),
-                    **self._snapshot(),
-                }
-            )
+            # 账号级事件（进/出账号、跑完）：立即落盘
+            with self._state_lock:
+                self._last_state_write = time.time()
+            self._write_running_state()
+        elif touched:
+            # 普通业务行：节流落盘，避免逐行写文件
+            self._write_state_throttled(3.0)
 
     def _on_exit(self, code: int) -> None:
+        self._stop_heartbeat()
         self._write_state(
             {
                 'state': 'idle',
