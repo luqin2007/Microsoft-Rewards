@@ -122,111 +122,121 @@ eng.stop()                        # 进程树 + 独占的浏览器
 | **浏览器清理是 best-effort** | `stop()` 会额外按命令行含 `ms-playwright/playwright/patchright` 清理 Chrome/Edge，只动 MRS 自己拉起的浏览器，不碰用户日常浏览器 |
 | **集群模式进度** | `clusters > 1` 时 `progress.total` 以 `RUN-END` 的"处理账户数"为准，账号边界事件来自各 worker 的 IPC 汇总，粒度到账号而非子任务 |
 
-## 7. 运行期日志 TAG 清单（实测为准）
+## 7. 运行期日志 TAG 清单（实测 66 个）
 
-**权威来源是运行日志，不是源码 grep。** 因为部分 TAG 是间接传入 logger 的
-（例：`checkpointActiveSession('LOGIN-CHECKPOINT')`、`checkpointActiveSession('PRE-BROWSER-CLOSE')`），
-只 grep `logger.xxx(…, 'TAG', …)` 会漏掉这些（实测能扫到 105 个直接调用，但仍不全）。
+**权威来源是运行日志。** 源码 grep 会漏（`LOGIN-CHECKPOINT` / `PRE-BROWSER-CLOSE` 走
+`checkpointActiveSession('TAG')` 间接传参；`SEARCH-COOKIE-*` / `CONTEXT-REFRESH-*` 也是同类）。
+下表取自 VM `C:\Tools\MRS助手\logs\*.log` 中 **26 个文件**（排除 231MB 的 crash 日志），
+用严格正则只匹配「级别 + 平台 + [TAG]」的第三段，共 **66 个真实 TAG**：
 
-下表是 2026-11-23 从 VM 的 `crash-2026-11-23.log`（前 2 万行）与当天正常日志的并集里
-提取的**实际出现过**的 42 个：
+| TAG | 中文 | 出现次数 | 当前任务 |
+|---|---|---|---|
+| `REACT-PARSE` | 解析奖励数据 | 18291 | 是 |
+| `BOOTSTRAP` | 引导积分页 | 17681 | 是 |
+| `COOKIE-SYNC` | 同步 Cookie | 4658 | 是 |
+| `GET-DASHBOARD-DATA` | 读取仪表盘数据 | 4337 | 是 |
+| `LOGIN` | 开始登录 | 3784 | 是 |
+| `READ-TO-EARN` | 阅读赚积分 | 3324 | 是 |
+| `QUERY-CLUSTER` | 查询任务簇 | 2610 | 是 |
+| `GHOST-CLICK` | 补点未生效任务 | 2406 | 是 |
+| `SEARCH-CLOSE-TABS` | 关闭搜索标签页 | 2343 | 是 |
+| `QUERY-QUEUE` | 处理任务队列 | 2324 | 是 |
+| `LOGIN-BING` | Bing 会话验证 | 2303 | 是 |
+| `DETECT-STATE` | 检测页面状态 | 1765 | 是 |
+| `SEARCH-BING` | Bing 搜索 | 1583 | 是 |
+| `FLOW` | 任务间隔等待 | 1346 | 是 |
+| `SEARCH-COOKIE-SEED` | 播种搜索 Cookie | 1252 | 是 |
+| `BROWSER` | 启动浏览器 | 1243 | 是 |
+| `SEARCH-COOKIE-CAPTURE` | 捕获搜索 Cookie | 1190 | 是 |
+| `ACTIVITY` | 活动执行 | 796 | 是 |
+| `LOGIN-APP` | App 登录 | 780 | 是 |
+| `DAILY-CHECK-IN` | 每日签到 | 724 | 是 |
+| `URL-REWARD` | 领取链接奖励 | 713 | 是 |
+| `GET-REWARD-SESSION` | 获取奖励会话 | 632 | 是 |
+| `CLOSE-BROWSER` | 关闭浏览器 | 584 | 是 |
+| `PRE-BROWSER-CLOSE` | 关闭前收尾 | 579 | 是 |
+| `HANDLE-STATE` | 处理页面状态 | 562 | 是 |
+| `LOGIN-CHECKPOINT` | 登录检查点 | 548 | 是 |
+| `PUNCHCARD` | 打卡卡片 | 368 | 是 |
+| `EARN-SNAPSHOT` | 积分快照 | 362 | 否 |
+| `QUERY-MANAGER` | 查询调度 | 348 | 是 |
+| `CLAIM-BONUS-POINTS` | 领取奖励积分 | 320 | 是 |
+| `SESSION` | 恢复会话 | 317 | 是 |
+| `BROWSER-FINGERPRINT` | 浏览器指纹 | 314 | 是 |
+| `SEARCH-CHINA-TRENDS` | 中国区热词 | 296 | 是 |
+| `BUILD` | 构建请求 | 277 | 是 |
+| `SEARCH-MANAGER` | 搜索调度 | 266 | 是 |
+| `DAILY-SET` | 每日任务集 | 264 | 是 |
+| `ACCOUNT-START` | 开始处理账户 | 178 | 否 |
+| `MORE-PROMOTIONS` | 更多推广活动 | 163 | 是 |
+| `POINTS` | 积分结算 | 149 | 是 |
+| `ENABLE-STREAK-PROTECTION` | 开启连击保护 | 149 | 是 |
+| `GET-APP-TOKEN` | 获取 App Token | 148 | 是 |
+| `RUN-START` | 整轮启动 | 136 | 否 |
+| `ACTIVATE-SEARCH-PERK` | 激活搜索特权 | 129 | 是 |
+| `ACCOUNT-END` | 账户完成 | 124 | 否 |
+| `RUN-END` | 本轮结束 | 121 | 否 |
+| `APP-PROMOTIONS` | App 推广活动 | 112 | 是 |
+| `APP-REWARD` | App 奖励 | 84 | 是 |
+| `ACCOUNT-DELAY` | 账号间隔等待 | 44 | 否 |
+| `RELOAD-BAD-PAGE` | 重载异常页面 | 33 | 是 |
+| `SEARCH-BING-RELATED` | Bing 相关搜索 | 32 | 是 |
+| `REWARDS-PAGE` | Rewards 页面 | 26 | 是 |
+| `SEARCH-BING-SUGGESTIONS` | Bing 搜索建议 | 26 | 是 |
+| `ACCOUNT-PARTIAL` | 账号部分完成 | 15 | 否 |
+| `HUMANIZE` | 拟人化操作 | 13 | 是 |
+| `LOGIN-TOTP` | 两步验证 | 8 | 是 |
+| `MAIN-ERROR` | 主流程异常 | 6 | 否 |
+| `GET-APP-DASHBOARD-DATA` | 读取 App 仪表盘 | 4 | 是 |
+| `CONTEXT-REFRESH` | 刷新上下文 | 4 | 是 |
+| `DISMISS-ALL-MESSAGES` | 关闭弹窗 | 4 | 是 |
+| `LOGIN-ENTER-PASSWORD` | 输入密码 | 4 | 是 |
+| `LOGIN-ENTER-EMAIL` | 输入邮箱 | 3 | 是 |
+| `DISABLE-FIDO` | 关闭 Passkey 提示 | 3 | 是 |
+| `SEARCH-RANDOM-SCROLL` | 随机滚动 | 1 | 是 |
+| `CONTEXT-REFRESH-COOKIE-SEED` | 刷新并播种 Cookie | 1 | 是 |
+| `USERAGENT-EDGE-VERSION` | 查询 Edge 版本 | 1 | 是 |
+| `GET-CURRENT-POINTS` | 读取当前积分 | 1 | 是 |
 
-| TAG | 建议中文 | 当前任务 |
+**「当前任务」列**：`是` = 适合「正在做 XX」状态卡；`否` = 只适合日志时间线
+（账号边界 `ACCOUNT-*`、整轮 `RUN-*`、一次性快照 `EARN-SNAPSHOT`、异常 `MAIN-ERROR`）。
+
+> **`FLOW` 双语义**：`MAIN [FLOW] 开始为 xxx 创建会话` 与 `MOBILE [FLOW] 大任务间隔等待 | N秒`
+> 是两回事；运行期绝大多数时间是后者，默认按「任务间隔等待」显示。
+
+### 7.1 与 UI 现有映射的差异（2026-11-23，以 26 个日志为准）
+
+**UI 缺的 11 个**（会显示英文，按频次）：
+
+| TAG | 次数 | 建议中文 |
 |---|---|---|
-| `BROWSER` | 启动浏览器 | 是 |
-| `SESSION` | 恢复会话 | 是 |
-| `LOGIN` | 登录流程 | 是 |
-| `LOGIN-BING` | Bing 会话验证 | 是 |
-| `LOGIN-APP` | App 会话登录 | 是 |
-| `DETECT-STATE` | 识别页面状态 | 是 |
-| `HANDLE-STATE` | 处理页面状态 | 是 |
-| `LOGIN-CHECKPOINT` | 登录检查点 | 是 |
-| `GET-APP-TOKEN` | 获取 App 令牌 | 是 |
-| `GET-DASHBOARD-DATA` | 获取仪表板 | 是 |
-| `GET-REWARD-SESSION` | 获取奖励会话 | 是 |
-| `COOKIE-SYNC` | 同步 Cookie | 是 |
-| `REACT-PARSE` | 解析奖励数据 | 是 |
-| `BUILD` | 构建页面数据 | 是 |
-| `BOOTSTRAP` | 引导积分页 | 是 |
-| `BROWSER-FINGERPRINT` | 浏览器指纹 | 是 |
-| `RELOAD-BAD-PAGE` | 重载异常页面 | 是 |
-| `CLOSE-BROWSER` | 关闭浏览器 | 是 |
-| `PRE-BROWSER-CLOSE` | 关浏览器前检查点 | 是 |
-| `DAILY-SET` | 每日任务集 | 是 |
-| `DAILY-CHECK-IN` | 每日签到 | 是 |
-| `MORE-PROMOTIONS` | 更多推广活动 | 是 |
-| `PUNCHCARD` | 打卡卡片 | 是 |
-| `APP-PROMOTIONS` | 应用推广 | 是 |
-| `READ-TO-EARN` | 阅读赚积分 | 是 |
-| `ACTIVATE-SEARCH-PERK` | 搜索特权激活 | 是 |
-| `CLAIM-BONUS-POINTS` | 领取奖励积分 | 是 |
-| `URL-REWARD` | URL 奖励 | 是 |
-| `SEARCH-BING` | Bing 搜索 | 是 |
-| `SEARCH-MANAGER` | 搜索管理 | 是 |
-| `SEARCH-CHINA-TRENDS` | 中国热搜源 | 是 |
-| `ACTIVITY` | 活动执行 | 是 |
-| `FLOW` | 任务间隔等待 / 开始创建会话 | 是* |
-| `ACCOUNT-START` | 开始账号 | 是 |
-| `ACCOUNT-END` | 账号完成 | 是 |
-| `ACCOUNT-PARTIAL` | 账号部分完成 | 是 |
-| `ACCOUNT-DELAY` | 账号间等待 | 是 |
-| `POINTS` | 积分结算 | 是 |
-| `RUN-START` | 整轮启动 | 否 |
-| `RUN-END` | 整轮结束 | 否 |
-| `UNCAUGHT-EXCEPTION` | 未捕获异常 | 否 |
+| `BOOTSTRAP` | 17681 | 引导积分页 |
+| `ACTIVITY` | 796 | 活动执行 |
+| `RUN-START` | 136 | 整轮启动 |
+| `APP-REWARD` | 84 | App 奖励 |
+| `LOGIN-TOTP` | 8 | 两步验证 |
+| `DISMISS-ALL-MESSAGES` | 4 | 关闭弹窗 |
+| `LOGIN-ENTER-PASSWORD` | 4 | 输入密码 |
+| `LOGIN-ENTER-EMAIL` | 3 | 输入邮箱 |
+| `DISABLE-FIDO` | 3 | 关闭 Passkey 提示 |
+| `USERAGENT-EDGE-VERSION` | 1 | 查询 Edge 版本 |
+| `GET-CURRENT-POINTS` | 1 | 读取当前积分 |
 
-**「当前任务」列**：`是` = 适合显示在「正在做 XX」状态卡；`否` = 只适合日志时间线
-（整轮开始/结束、异常这类是状态而不是进度）。
+**UI 有、但这 26 个日志里从未出现过的 10 个**：
 
-> \* `FLOW` 有**双语义**，别只看名字：`MAIN [FLOW] 开始为 xxx 创建会话` 与
-> `MOBILE [FLOW] 大任务间隔等待 | N秒` 完全是两回事。运行期间绝大多数时间是后者，
-> 所以默认按「任务间隔等待」显示更贴切。
+`LOGIN-2FA` `LOGIN-PASSKEY` `SEARCH` `SEARCH-DESKTOP` `SEARCH-MOBILE` `DAILY` `ERROR` `EARN` `REDEEM` `STREAK`
 
-**未登记的 TAG 一律原样显示**。源码里另有约 60 个不常触发的 TAG
-（`QUERY-*`、`SEARCH-*` 多源、`VISUAL-SEARCH-*`、`CLUSTER-*`、`USERAGENT-*` 等），
-首次出现时显示原样即可，确认常用后再补中文名到本表。
+其中 `LOGIN-2FA` / `LOGIN-PASSKEY` / `SEARCH` / `SEARCH-DESKTOP` / `SEARCH-MOBILE` /
+`DAILY` / `ERROR` / `EARN` / `REDEEM` / `STREAK` 在源码里也查不到对应写法，
+基本可判定为**手写近似名**（真实名分别是 `LOGIN-TOTP`、无、`SEARCH-BING`、`SEARCH-BING`、
+`DAILY-SET`、`*-ERROR`、`EARN-SNAPSHOT`、无、`ENABLE-STREAK-PROTECTION`）。
+`LOGIN-2FA` / `LOGIN-PASSKEY` 这两个也可能只是这批账号没走到那一步——**建议先注释保留、跑两周再删**。
 
-**上游新增频率**：2026.11.11 → 19.2 → 23.1 两轮更新里，TAG **名称**没有变化
-（23.1 只是在 `GHOST-CLICK` 上多了一个「点击已触发跳转」的 debug 分支）。
-属于低频事件，**人工同步足够，不需要运行时解析本文档**。
+> 更正：`SEARCH-COOKIE-SEED` / `SEARCH-COOKIE-CAPTURE` / `CONTEXT-REFRESH-COOKIE-SEED`
+> 一度被误判为死映射，实际分别出现 1252 / 1190 / 1 次，是真实 TAG。
 
-**给 UI 的建议**（与网关侧讨论结果一致）：UI 保留自有映射作为运行时主数据，
-本文档作为对账依据；不要运行时读这个文件——UI 是 PyInstaller 单文件包，
-依赖另一个目录的 Markdown 会多一个耦合点，且表格格式变动会让解析崩掉。
+**未登记的 TAG 一律原样显示**（源码里还有约 40 个不常触发的，如 `CLUSTER-*`、`VISUAL-SEARCH-*`、
+`USERAGENT-*`、多源 `SEARCH-*`）。
 
-### 7.1 与 UI 现有映射的精确差异（2026-11-23 核对）
-
-三方数据：`ui/logparse.py` 的 `_CODE_TITLE` **65 条** / 源码 TAG **107 个** /
-本轮在 VM 实际出现 **42 个**。
-
-> 网关侧此前汇总时用的是**手打的 31 条**，与真实 65 条不符；这也是「8 个 TAG 不存在」的直接成因
-> （`LOGIN-2FA` / `PUNCH-CARDS` / `SEARCH-DESKTOP` 等是汇总时的近似写法）。
-> **对比差异时务必直接从 `ui/logparse.py` dump key 列表，不要手打。**
-
-#### UI 该删的 13 条（死映射：源码 11.11.1 与 23.1 两个版本里都不存在，永远不会命中）
-
-`CONTEXT-REFRESH-COOKIE-SEED`、`DAILY`、`EARN`、`ERROR`、`LOGIN-2FA`、`LOGIN-PASSKEY`、
-`REDEEM`、`SEARCH`、`SEARCH-COOKIE-CAPTURE`、`SEARCH-COOKIE-SEED`、`SEARCH-DESKTOP`、
-`SEARCH-MOBILE`、`STREAK`
-
-> 注意几个容易混淆的真实名：它是 `LOGIN-TOTP` 不是 `LOGIN-2FA`；是 `PUNCHCARD` 不是 `PUNCH-CARDS`；
-> 是 `EARN-SNAPSHOT` / `ENABLE-STREAK-PROTECTION`，没有裸的 `EARN` / `STREAK`；
-> 是 `ACCOUNT-ERROR` / `MAIN-ERROR`，没有裸的 `ERROR`；搜索相关只有 `SEARCH-BING` /
-> `SEARCH-MANAGER` / `SEARCH-CHINA-TRENDS` 等，没有裸 `SEARCH` 或按平台拆分的 `SEARCH-DESKTOP|MOBILE`。
->
-> 一个永远命中不了的映射只是噪音，删掉比留着干净。
-
-#### UI 该补的 4 条（本轮真实出现过、但没有中文名，状态卡/时间线会显示英文）
-
-| TAG | 建议中文 |
-|---|---|
-| `ACTIVITY` | 活动执行 |
-| `BOOTSTRAP` | 引导积分页 |
-| `RUN-START` | 整轮启动 |
-| `UNCAUGHT-EXCEPTION` | 未捕获异常 |
-
-#### 其余 51 个源码 TAG
-
-本轮没有触发，UI 也没有映射 —— **按原样显示即可**，确认常用后再补。
-主要包括 `CLUSTER-*`、`LOGIN-*` 细分阶段（`LOGIN-TOTP` / `LOGIN-RECOVERY` / `LOGIN-PASSWORDLESS` …）、
-多源 `SEARCH-*`、`VISUAL-SEARCH-*`、`USERAGENT-*`、`*ERROR` 等。
+**上游新增频率**：`2026.11.11 → 19.2 → 23.1` 两轮更新里 TAG 名称零变化，人工同步足够，
+不需要运行时解析本文档。UI 保留自有映射为主，本文档作对账依据。
