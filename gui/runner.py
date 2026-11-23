@@ -77,6 +77,10 @@ class BotRunner:
         if self.running:
             raise RuntimeError('已有任务在运行')
 
+        # 上一轮的读取线程可能还活着（进程刚死、_pump 正在收尾）。先给它一点时间退出，
+        # 避免旧线程与管道句柄一路堆积 —— 每一轮都漏一个的话，长跑会越来越慢。
+        self._join_pump(1.0)
+
         # A parent shell may still carry ACCOUNT_* values; drop them so the
         # overrides below are the single source of truth.
         env = {k: v for k, v in os.environ.items() if not k.startswith('ACCOUNT_')}
@@ -110,6 +114,15 @@ class BotRunner:
             )
         self._thread = threading.Thread(target=self._pump, daemon=True)
         self._thread.start()
+
+    def _join_pump(self, timeout: float) -> None:
+        """等上一轮的读取线程退出（超时就放弃，别把它等死）。"""
+        thread = self._thread
+        if thread is None or not thread.is_alive():
+            return
+        if thread is threading.current_thread():
+            return
+        thread.join(timeout)
 
     def _pump(self) -> None:
         proc = self.proc
