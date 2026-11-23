@@ -121,3 +121,30 @@ eng.stop()                        # 进程树 + 独占的浏览器
 | **日志持久化** | `logs()` 先读内存环形缓冲，缓冲为空时从 `logs/engine-log.jsonl` 尾部恢复；每行同时追加到该文件。所以网关每次 `native` 新建实例、甚至网关重启后，`after_seq` 增量拉取仍然连续。`start()` 会把 seq 归零并重建该文件（网关据此判断「新一轮」） |
 | **浏览器清理是 best-effort** | `stop()` 会额外按命令行含 `ms-playwright/playwright/patchright` 清理 Chrome/Edge，只动 MRS 自己拉起的浏览器，不碰用户日常浏览器 |
 | **集群模式进度** | `clusters > 1` 时 `progress.total` 以 `RUN-END` 的"处理账户数"为准，账号边界事件来自各 worker 的 IPC 汇总，粒度到账号而非子任务 |
+
+## 7. 运行期日志 TAG 清单（权威）
+
+`currentTask` 的值就是下面这些 TAG。**这份清单由 MRS 维护**，UI 直接引用即可；
+上游新增 TAG 时这里同步，不必两边各维护一份。路径固定：`Microsoft-Rewards-fork/gui/ENGINE.md`。
+
+| TAG | 建议中文 | 说明 |
+|---|---|---|
+| `FLOW` | 任务间隔等待 / 开始创建会话 | **双语义，别只看名字**：`MAIN [FLOW] 开始为 xxx 创建会话` 与 `MOBILE [FLOW] 大任务间隔等待 \| N秒` 完全是两回事。运行期间绝大多数时间它是后者（等待），所以默认按「任务间隔等待」显示更贴切 |
+| `ACCOUNT-START` | 开始账号 | |
+| `GET-REWARD-SESSION` | 获取奖励会话 | |
+| `REACT-PARSE` | 解析奖励数据 | |
+| `LOGIN-CHECKPOINT` | 登录检查点 | |
+| `COOKIE-SYNC` | 同步 Cookie | |
+| `URL-REWARD` | URL 奖励 | |
+| `QUERY-QUEUE` | 查询队列 | |
+| `GHOST-CLICK` | 模拟点击 | |
+| `EARN` | 赚取积分 | |
+| `REDEEM` | 兑换 | |
+| `STREAK` | 连续签到 | |
+| `ENABLE-STREAK-PROTECTION` | 开启连续保护 | |
+| `RUN-END` | 运行结束 | |
+
+**不适合当「当前任务」显示的**（属于状态而非进度）：`RUN-START`、`ACCOUNT-END`、`ACCOUNT-SKIP`、
+`ACCOUNT`、`CLUSTER-*`、`PROCESS`、`UNCAUGHT-EXCEPTION`。
+
+新增 TAG 时请同时更新本表；若 UI 侧先遇到未登记的 TAG，**原样显示**比猜一个中文名更安全。
