@@ -425,7 +425,10 @@ class MrsEngine:
         state = self._read_state()
         state_pid = state.get('pid')
         if state.get('state') == 'running' and pid_alive(state_pid):
-            if self._pid_matches_run(state_pid, state.get('startedAt')):
+            # 短路：文件说 running、却已经有 lastExit —— 这是矛盾状态
+            # （上一轮结束的痕迹没被覆盖，或进程正在退出的窗口期）。
+            # 正常运行时 _write_running_state 不带 lastExit，所以不会误伤。
+            if not state.get('lastExit') and self._pid_matches_run(state_pid, state.get('startedAt')):
                 return int(state_pid)
 
         with self._lock:
