@@ -122,29 +122,74 @@ eng.stop()                        # 进程树 + 独占的浏览器
 | **浏览器清理是 best-effort** | `stop()` 会额外按命令行含 `ms-playwright/playwright/patchright` 清理 Chrome/Edge，只动 MRS 自己拉起的浏览器，不碰用户日常浏览器 |
 | **集群模式进度** | `clusters > 1` 时 `progress.total` 以 `RUN-END` 的"处理账户数"为准，账号边界事件来自各 worker 的 IPC 汇总，粒度到账号而非子任务 |
 
-## 7. 运行期日志 TAG 清单（权威）
+## 7. 运行期日志 TAG 清单（实测为准）
 
-`currentTask` 的值就是下面这些 TAG。**这份清单由 MRS 维护**，UI 直接引用即可；
-上游新增 TAG 时这里同步，不必两边各维护一份。路径固定：`Microsoft-Rewards-fork/gui/ENGINE.md`。
+**权威来源是运行日志，不是源码 grep。** 因为部分 TAG 是间接传入 logger 的
+（例：`checkpointActiveSession('LOGIN-CHECKPOINT')`、`checkpointActiveSession('PRE-BROWSER-CLOSE')`），
+只 grep `logger.xxx(…, 'TAG', …)` 会漏掉这些（实测能扫到 105 个直接调用，但仍不全）。
 
-| TAG | 建议中文 | 说明 |
+下表是 2026-11-23 从 VM 的 `crash-2026-11-23.log`（前 2 万行）与当天正常日志的并集里
+提取的**实际出现过**的 42 个：
+
+| TAG | 建议中文 | 当前任务 |
 |---|---|---|
-| `FLOW` | 任务间隔等待 / 开始创建会话 | **双语义，别只看名字**：`MAIN [FLOW] 开始为 xxx 创建会话` 与 `MOBILE [FLOW] 大任务间隔等待 \| N秒` 完全是两回事。运行期间绝大多数时间它是后者（等待），所以默认按「任务间隔等待」显示更贴切 |
-| `ACCOUNT-START` | 开始账号 | |
-| `GET-REWARD-SESSION` | 获取奖励会话 | |
-| `REACT-PARSE` | 解析奖励数据 | |
-| `LOGIN-CHECKPOINT` | 登录检查点 | |
-| `COOKIE-SYNC` | 同步 Cookie | |
-| `URL-REWARD` | URL 奖励 | |
-| `QUERY-QUEUE` | 查询队列 | |
-| `GHOST-CLICK` | 模拟点击 | |
-| `EARN` | 赚取积分 | |
-| `REDEEM` | 兑换 | |
-| `STREAK` | 连续签到 | |
-| `ENABLE-STREAK-PROTECTION` | 开启连续保护 | |
-| `RUN-END` | 运行结束 | |
+| `BROWSER` | 启动浏览器 | 是 |
+| `SESSION` | 恢复会话 | 是 |
+| `LOGIN` | 登录流程 | 是 |
+| `LOGIN-BING` | Bing 会话验证 | 是 |
+| `LOGIN-APP` | App 会话登录 | 是 |
+| `DETECT-STATE` | 识别页面状态 | 是 |
+| `HANDLE-STATE` | 处理页面状态 | 是 |
+| `LOGIN-CHECKPOINT` | 登录检查点 | 是 |
+| `GET-APP-TOKEN` | 获取 App 令牌 | 是 |
+| `GET-DASHBOARD-DATA` | 获取仪表板 | 是 |
+| `GET-REWARD-SESSION` | 获取奖励会话 | 是 |
+| `COOKIE-SYNC` | 同步 Cookie | 是 |
+| `REACT-PARSE` | 解析奖励数据 | 是 |
+| `BUILD` | 构建页面数据 | 是 |
+| `BOOTSTRAP` | 引导积分页 | 是 |
+| `BROWSER-FINGERPRINT` | 浏览器指纹 | 是 |
+| `RELOAD-BAD-PAGE` | 重载异常页面 | 是 |
+| `CLOSE-BROWSER` | 关闭浏览器 | 是 |
+| `PRE-BROWSER-CLOSE` | 关浏览器前检查点 | 是 |
+| `DAILY-SET` | 每日任务集 | 是 |
+| `DAILY-CHECK-IN` | 每日签到 | 是 |
+| `MORE-PROMOTIONS` | 更多推广活动 | 是 |
+| `PUNCHCARD` | 打卡卡片 | 是 |
+| `APP-PROMOTIONS` | 应用推广 | 是 |
+| `READ-TO-EARN` | 阅读赚积分 | 是 |
+| `ACTIVATE-SEARCH-PERK` | 搜索特权激活 | 是 |
+| `CLAIM-BONUS-POINTS` | 领取奖励积分 | 是 |
+| `URL-REWARD` | URL 奖励 | 是 |
+| `SEARCH-BING` | Bing 搜索 | 是 |
+| `SEARCH-MANAGER` | 搜索管理 | 是 |
+| `SEARCH-CHINA-TRENDS` | 中国热搜源 | 是 |
+| `ACTIVITY` | 活动执行 | 是 |
+| `FLOW` | 任务间隔等待 / 开始创建会话 | 是* |
+| `ACCOUNT-START` | 开始账号 | 是 |
+| `ACCOUNT-END` | 账号完成 | 是 |
+| `ACCOUNT-PARTIAL` | 账号部分完成 | 是 |
+| `ACCOUNT-DELAY` | 账号间等待 | 是 |
+| `POINTS` | 积分结算 | 是 |
+| `RUN-START` | 整轮启动 | 否 |
+| `RUN-END` | 整轮结束 | 否 |
+| `UNCAUGHT-EXCEPTION` | 未捕获异常 | 否 |
 
-**不适合当「当前任务」显示的**（属于状态而非进度）：`RUN-START`、`ACCOUNT-END`、`ACCOUNT-SKIP`、
-`ACCOUNT`、`CLUSTER-*`、`PROCESS`、`UNCAUGHT-EXCEPTION`。
+**「当前任务」列**：`是` = 适合显示在「正在做 XX」状态卡；`否` = 只适合日志时间线
+（整轮开始/结束、异常这类是状态而不是进度）。
 
-新增 TAG 时请同时更新本表；若 UI 侧先遇到未登记的 TAG，**原样显示**比猜一个中文名更安全。
+> \* `FLOW` 有**双语义**，别只看名字：`MAIN [FLOW] 开始为 xxx 创建会话` 与
+> `MOBILE [FLOW] 大任务间隔等待 | N秒` 完全是两回事。运行期间绝大多数时间是后者，
+> 所以默认按「任务间隔等待」显示更贴切。
+
+**未登记的 TAG 一律原样显示**。源码里另有约 60 个不常触发的 TAG
+（`QUERY-*`、`SEARCH-*` 多源、`VISUAL-SEARCH-*`、`CLUSTER-*`、`USERAGENT-*` 等），
+首次出现时显示原样即可，确认常用后再补中文名到本表。
+
+**上游新增频率**：2026.11.11 → 19.2 → 23.1 两轮更新里，TAG **名称**没有变化
+（23.1 只是在 `GHOST-CLICK` 上多了一个「点击已触发跳转」的 debug 分支）。
+属于低频事件，**人工同步足够，不需要运行时解析本文档**。
+
+**给 UI 的建议**（与网关侧讨论结果一致）：UI 保留自有映射作为运行时主数据，
+本文档作为对账依据；不要运行时读这个文件——UI 是 PyInstaller 单文件包，
+依赖另一个目录的 Markdown 会多一个耦合点，且表格格式变动会让解析崩掉。
