@@ -373,8 +373,10 @@ class MrsEngine:
         """文件里那个 pid，是否真是「本轮」起的进程（防 pid 复用误判）。
 
         * 没记 ``startedAt`` 或拿不到进程创建时间 → 不判死（宁可误报在跑，也别放行重复启动）
-        * 正常情况：进程创建时间略早于或等于 ``startedAt``（Popen 后立刻写状态）
-        * 若进程比 ``startedAt`` **晚 60 秒以上**才出现，只可能是旧 pid 被系统复用给了别人
+        * ``startedAt`` 取自 Popen 之后，与进程真实创建时间的差 < 200ms
+        * 双向窗口 5 秒：
+          - 进程比 ``startedAt`` **早**太多 → 这个 pid 属于更早的进程
+          - 进程比 ``startedAt`` **晚**太多 → 旧 pid 已死，号被系统分给了新进程
         """
         if not started_at:
             return True
@@ -385,7 +387,7 @@ class MrsEngine:
             started = datetime.fromisoformat(str(started_at)).timestamp()
         except Exception:
             return True
-        return created <= started + 60
+        return abs(created - started) <= 5.0
 
     def _discard_stale_runner(self) -> None:
         """M-3 的配套：状态文件说没在跑，内存里却还挂着一个运行器 → 视为残留并清掉。
@@ -549,12 +551,13 @@ class MrsEngine:
             }
         self._reset_log_sink()
 
-        started_at = _utc_now()
+        # 占位状态：此刻还没有 pid，也还没法给准 startedAt。
+        # startedAt 故意留空而不是先取当前时间 —— 见下面 Popen 之后那处注释。
         self._write_state(
             {
                 'state': 'running',
-                'pid': None,  # 立即补写真实 pid
-                'startedAt': started_at,
+                'pid': None,
+                'startedAt': None,
                 'entry': 'dist/index.js',
                 'nodeExe': node,
                 'cwd': self.root,
@@ -570,6 +573,10 @@ class MrsEngine:
         with self._lock:
             self._runner = runner
         pid = runner.proc.pid if runner.proc else None
+        # startedAt 在 Popen 之后才取：这样它与进程真实创建时间几乎同一刻（差 < 200ms），
+        # 消费方（网关）就能用「进程启动时间 ≈ startedAt」来判断 pid 有没有被系统复用。
+        # 若在 Popen 之前取，startedAt 会系统性偏早（差值 = Popen 耗时），对面就得放宽容差。
+        started_at = _utc_now()
         self._write_state(
             {
                 'state': 'running',
