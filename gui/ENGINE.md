@@ -199,6 +199,10 @@ eng.stop()                        # 进程树 + 独占的浏览器
 三方数据：`ui/logparse.py` 的 `_CODE_TITLE` **65 条** / 源码 TAG **107 个** /
 本轮在 VM 实际出现 **42 个**。
 
+> 网关侧此前汇总时用的是**手打的 31 条**，与真实 65 条不符；这也是「8 个 TAG 不存在」的直接成因
+> （`LOGIN-2FA` / `PUNCH-CARDS` / `SEARCH-DESKTOP` 等是汇总时的近似写法）。
+> **对比差异时务必直接从 `ui/logparse.py` dump key 列表，不要手打。**
+
 #### UI 该删的 13 条（死映射：源码 11.11.1 与 23.1 两个版本里都不存在，永远不会命中）
 
 `CONTEXT-REFRESH-COOKIE-SEED`、`DAILY`、`EARN`、`ERROR`、`LOGIN-2FA`、`LOGIN-PASSKEY`、
