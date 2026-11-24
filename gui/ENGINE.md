@@ -263,3 +263,31 @@ UI 有个「当前任务」状态卡，需要知道哪些 TAG 是「正在做什
 **同一时刻只应有一个动作型 TAG 占据「当前任务」**。日志里动作型 TAG 交替出现属于正常
 （引导→解析→搜索→阅读…），UI 按「最近一个动作型 TAG」显示即可；
 状态型 TAG 出现时**不要把当前的「当前任务」清空**，除非同时带了账号切换（`ACCOUNT-END`）。
+
+### 7.3 TAG 的两种产生方式（统计时必须都算上）
+
+不是所有 TAG 都写成 `logger.info(…, 'TAG', …)` 的字面量。有一类是通过函数参数间接传进 logger 的：
+
+```typescript
+await this.browser.func.checkpointActiveSession('LOGIN-CHECKPOINT')      // → logger.debug(…, source, …)
+await this.browser.func.checkpointActiveSession('PRE-BROWSER-CLOSE')
+await this.bot.browser.func.synchronizeActiveBrowserCookies('SEARCH-COOKIE-SEED', true)
+await this.bot.browser.func.synchronizeActiveBrowserCookies('SEARCH-COOKIE-CAPTURE')
+await this.browser.func.synchronizeActiveBrowserCookies('CONTEXT-REFRESH-COOKIE-SEED', true)
+```
+
+**只 grep `logger\.xxx\(…'TAG'…` 会漏掉这 5 个**，进而误判成「源码里不存在」或「永远不会命中」。
+实际它们都会命中，而且都走 `logger.debug` —— 即 `debugLogs=false` 时**不落盘**。
+
+统计「某 TAG 有没有日志 / 是什么级别」时，必须同时扫这三类调用：
+
+```
+logger.(info|warn|error|debug)(..., 'TAG', ...)
+checkpointActiveSession('TAG')
+synchronizeActiveBrowserCookies('TAG' [, true])
+```
+
+> 本文档 §7 的 87 个阶段 TAG 里，有 20+ 个只在 **debug** 级出现（上表 5 个 + `COOKIE-SYNC` /
+> `QUERY-*` / `SEARCH-*` 多源等）。默认 `debugLogs=false` 时它们不会出现在日志里 ——
+> 这不影响「阶段能不能被看见」，因为**每个阶段都至少有一个 info 级 TAG 兜底**；
+> 但如果将来往 `stages()` 里加新 TAG，别只加 debug 级的，UI 会一直显示「还没到」。
