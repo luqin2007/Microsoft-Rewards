@@ -291,3 +291,19 @@ synchronizeActiveBrowserCookies('TAG' [, true])
 > `QUERY-*` / `SEARCH-*` 多源等）。默认 `debugLogs=false` 时它们不会出现在日志里 ——
 > 这不影响「阶段能不能被看见」，因为**每个阶段都至少有一个 info 级 TAG 兜底**；
 > 但如果将来往 `stages()` 里加新 TAG，别只加 debug 级的，UI 会一直显示「还没到」。
+
+### 7.4 归类原则：别按名字猜，看调用点和级别
+
+2026-11-24 的一次归错：`EARN-SNAPSHOT` 名字像「积分快照」（正常业务中间产物），
+一开始归进了 DASHBOARD 的动作型 tags。查了实际调用点才发现三处（`BrowserFunc.ts:1110/1123/1138`）
+**全是 `logger.debug`**，内容是「通过 HTTP 获取 X 失败」「不在缓存快照中 - 正在重新获取」
+「已重新获取 /earn 和 /dashboard」——**是事件，不是动作**。放进动作型会让阶段栏显示
+「正在 积分快照」，讲不通。已移到 `boundaryTags`。
+
+**归类一个 TAG 之前，先回答三件事**：
+
+1. **调用点在哪**（`grep -rn "'TAG'" src/`，并注意 §7.3 说的间接传参）
+2. **日志级别是什么**（`info` 才是默认可见；`debug` 在 `debugLogs=false` 时不落盘）
+3. **消息内容是什么**（「正在做某事」还是「发生了什么」）
+
+只看名字会错，这三个都要看。
