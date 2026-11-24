@@ -9,6 +9,7 @@ written back verbatim.
 import json
 import os
 import shutil
+import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 # (config key, Chinese label, tooltip shown in the UI)
@@ -147,12 +148,35 @@ def load(path: str, example_path: str = '') -> Dict[str, Any]:
     config.setdefault('workers', {})
     return config
 
-def _read_json(path: str) -> Dict[str, Any]:
+def _warn(message: str) -> None:
+    """配置读失败要留痕。
+
+    静默回落比报错更糟：用户改了 config.json（甚至重启了程序），
+    看到的还是默认值，却完全不知道为什么。
+    """
     try:
-        with open(path, 'r', encoding='utf-8') as fh:
+        print(f'[config_store] {message}', file=sys.stderr)
+    except Exception:
+        pass
+
+
+def _read_json(path: str) -> Dict[str, Any]:
+    """读一个 JSON 文件，兼容带 BOM 的写法。
+
+    用 ``utf-8-sig`` 而不是 ``utf-8``：PowerShell 5.1 的
+    ``Set-Content -Encoding UTF8``、Windows 记事本「另存为 UTF-8」都会写 BOM，
+    而 ``encoding='utf-8'`` 下 ``json.load`` 会抛
+    ``JSONDecodeError: Unexpected UTF-8 BOM`` —— 曾被 except 静默吞掉、回落到
+    config.example.json 的默认值（2026-11-24 由网关会话实测发现并复现）。
+    """
+    try:
+        with open(path, 'r', encoding='utf-8-sig') as fh:
             data = json.load(fh)
         return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError):
+    except json.JSONDecodeError as exc:
+        _warn(f'{path} 不是合法 JSON（{exc}）；该文件被忽略，回退到默认值')
+        return {}
+    except OSError:
         return {}
 
 def _deep_merge(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:

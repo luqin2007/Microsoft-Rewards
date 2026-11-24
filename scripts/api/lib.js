@@ -109,6 +109,14 @@ export function loadEnvFile(projectRoot) {
     return envFile
 }
 
+function readJsonFile(filePath) {
+    // PowerShell 5.1 的 Set-Content -Encoding UTF8、Windows 记事本另存 UTF-8 都会写 BOM，
+    // JSON.parse 遇到 BOM 直接抛 —— 这里先剥掉，否则「配置被静默忽略」很难排查。
+    let text = fs.readFileSync(filePath, 'utf8')
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1)
+    return JSON.parse(text)
+}
+
 export function loadConfigSafe(projectRoot) {
     const candidates = [
         path.join(resolveDataDir(), 'config.json'),
@@ -120,7 +128,7 @@ export function loadConfigSafe(projectRoot) {
     for (const p of candidates) {
         if (!fs.existsSync(p)) continue
         try {
-            return { data: JSON.parse(fs.readFileSync(p, 'utf8')), path: p }
+            return { data: readJsonFile(p), path: p }
         } catch (error) {
             return { data: null, path: p, error: error instanceof Error ? error.message : String(error) }
         }

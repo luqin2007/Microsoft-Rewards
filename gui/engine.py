@@ -722,8 +722,21 @@ class MrsEngine:
             problems.append('dist/index.js 不存在，请先构建或补齐 dist 目录')
 
         config_exists = os.path.isfile(self.config_path)
+        config_parses = True
         if not config_exists:
             problems.append('config.json 不存在')
+        else:
+            # 配置能被读到，但读不出来（BOM / 语法错误）时 config_store 会回落默认值，
+            # 用户看到的开关全是默认态却不知道为什么。这里让它变成可见的 problem。
+            try:
+                with open(self.config_path, encoding='utf-8-sig') as fh:
+                    json.load(fh)
+            except Exception as exc:
+                config_parses = False
+                problems.append(
+                    f'config.json 无法解析（{type(exc).__name__}）—— 引擎会回落到默认配置，'
+                    '请检查文件是否被外部工具写入了 BOM 或存在语法错误'
+                )
 
         env_exists = os.path.isfile(self.env_path)
         if not env_exists:
@@ -758,6 +771,7 @@ class MrsEngine:
             'nodeVersion': self._node_version(),
             'distExists': dist_exists,
             'configExists': config_exists,
+            'configParses': config_parses,
             'envExists': env_exists,
             'accountCount': len(accounts),
             'browser': browser,
