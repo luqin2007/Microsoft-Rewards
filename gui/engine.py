@@ -71,6 +71,82 @@ ACCOUNT_FIELD_ALIASES = {
     'save_fingerprint_desktop': 'SAVE_FINGERPRINT_DESKTOP',
 }
 
+# 一个账号完整跑一遍会经历的业务阶段。
+#
+# 顺序取自 src/index.ts 的 Main()（2026.11.23.1）：移动会话 → 登录 → 仪表板 →
+# 连击保护 → 打卡卡片 → 搜索特权 → 每日任务集 → 更多推广 → App 签到 → App 推广 →
+# 阅读 → 搜索 → 领取奖励。
+#
+# 每条带 tags：把日志 TAG 归到阶段，UI 不必靠「出现顺序」猜，也不会因为某个 TAG
+# 反复出现而多出条目。optional=True 表示该阶段受配置开关或账号状态控制（例如
+# doReadToEarn 关掉、或 App 类任务因没有 accessToken 整组跳过时，就不会发生）。
+STAGES: List[Dict[str, Any]] = [
+    {
+        'code': 'SESSION',
+        'label': '创建会话',
+        'order': 1,
+        'optional': False,
+        'tags': ['FLOW', 'BROWSER', 'SESSION', 'BROWSER-FINGERPRINT', 'CLOSE-BROWSER', 'PRE-BROWSER-CLOSE'],
+    },
+    {
+        'code': 'LOGIN',
+        'label': '登录',
+        'order': 2,
+        'optional': False,
+        'tags': [
+            'LOGIN', 'LOGIN-BING', 'LOGIN-APP', 'LOGIN-TOTP', 'LOGIN-ENTER-EMAIL', 'LOGIN-ENTER-PASSWORD',
+            'LOGIN-CHECKPOINT', 'DETECT-STATE', 'HANDLE-STATE', 'DISABLE-FIDO', 'GET-APP-TOKEN',
+            'GET-REWARD-SESSION',
+        ],
+    },
+    {
+        'code': 'DASHBOARD',
+        'label': '读取仪表板',
+        'order': 3,
+        'optional': False,
+        'tags': [
+            'GET-DASHBOARD-DATA', 'GET-APP-DASHBOARD-DATA', 'POINTS', 'REACT-PARSE', 'BUILD', 'BOOTSTRAP',
+            'REWARDS-PAGE', 'RELOAD-BAD-PAGE', 'COOKIE-SYNC', 'CONTEXT-REFRESH',
+            'CONTEXT-REFRESH-COOKIE-SEED', 'GET-CURRENT-POINTS', 'USERAGENT-EDGE-VERSION',
+            'DISMISS-ALL-MESSAGES', 'HUMANIZE',
+        ],
+    },
+    {'code': 'STREAK', 'label': '连击保护', 'order': 4, 'optional': True, 'tags': ['ENABLE-STREAK-PROTECTION']},
+    {'code': 'PUNCHCARD', 'label': '打卡卡片', 'order': 5, 'optional': True, 'tags': ['PUNCHCARD']},
+    {'code': 'SEARCH-PERK', 'label': '搜索特权', 'order': 6, 'optional': True, 'tags': ['ACTIVATE-SEARCH-PERK']},
+    {'code': 'DAILY-SET', 'label': '每日任务集', 'order': 7, 'optional': True, 'tags': ['DAILY-SET']},
+    {'code': 'MORE-PROMOTIONS', 'label': '更多推广', 'order': 8, 'optional': True, 'tags': ['MORE-PROMOTIONS']},
+    {'code': 'APP-CHECKIN', 'label': 'App 签到', 'order': 9, 'optional': True, 'tags': ['DAILY-CHECK-IN']},
+    {'code': 'APP-PROMOTIONS', 'label': 'App 推广', 'order': 10, 'optional': True, 'tags': ['APP-PROMOTIONS', 'APP-REWARD']},
+    {'code': 'READ-TO-EARN', 'label': '阅读赚积分', 'order': 11, 'optional': True, 'tags': ['READ-TO-EARN']},
+    {
+        'code': 'SEARCH',
+        'label': '搜索',
+        'order': 12,
+        'optional': True,
+        'tags': [
+            'SEARCH-BING', 'SEARCH-MANAGER', 'SEARCH-CHINA-TRENDS', 'SEARCH-BING-RELATED',
+            'SEARCH-BING-SUGGESTIONS', 'SEARCH-RANDOM-SCROLL', 'SEARCH-COOKIE-SEED',
+            'SEARCH-COOKIE-CAPTURE', 'SEARCH-CLOSE-TABS', 'QUERY-QUEUE', 'QUERY-CLUSTER',
+            'QUERY-MANAGER', 'GHOST-CLICK',
+        ],
+    },
+    {
+        'code': 'CLAIM',
+        'label': '领取奖励积分',
+        'order': 13,
+        'optional': True,
+        'tags': ['CLAIM-BONUS-POINTS', 'URL-REWARD', 'ACTIVITY'],
+    },
+]
+
+# 这些 TAG 描述的是「账号/整轮边界」或异常，不属于上面任何一个业务阶段。
+BOUNDARY_TAGS = [
+    'ACCOUNT-START', 'ACCOUNT-END', 'ACCOUNT-PARTIAL', 'ACCOUNT-DELAY',
+    'EARN-SNAPSHOT', 'RUN-START', 'RUN-END', 'MAIN-ERROR',
+]
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -965,4 +1041,26 @@ class MrsEngine:
             'presetOrder': list(cs.PRESET_ORDER),
             'accountFields': list(ev.FIELD_ORDER),
             'secretFields': sorted(ev.SECRET_FIELDS),
+        }
+
+    def stages(self) -> Dict[str, Any]:
+        """一个账号跑一遍会经历的**固定、有序**业务阶段。
+
+        只读元数据。UI 用它渲染「阶段」栏：未跑到的阶段显示灰色，
+        这样用户一眼能看到总共几步、现在第几步。
+
+        为什么不让 UI 从日志推断：日志推断出来的顺序是「出现顺序」，
+        同一个 TAG 反复出现会变成多个条目，而且没跑到的阶段根本不会出现。
+
+        返回结构：
+          stages       有序阶段数组，每项 code/label/order/optional/tags
+          boundaryTags 不属于任何阶段的边界/异常 TAG（账号起止、整轮起止、异常）
+        """
+        return {
+            'stages': [dict(stage) for stage in STAGES],
+            'boundaryTags': list(BOUNDARY_TAGS),
+            'note': (
+                '顺序取自 src/index.ts 的 Main()；optional=true 表示该阶段受配置开关或账号状态控制'
+                '（如 doReadToEarn 关闭、或无 accessToken 时 App 类任务整组跳过）'
+            ),
         }
