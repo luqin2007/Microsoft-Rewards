@@ -41,6 +41,10 @@ STATE_NAME = 'run-state.json'
 LOG_MAX_BYTES = 64 * 1024 * 1024       # 单文件上限，超过就轮转成 .1
 LOG_TAIL_READ_BYTES = 2 * 1024 * 1024  # 新实例恢复缓冲时只读尾部这么多，不读整个文件
 
+# 每轮结束时追加一行到 logs/run-history.jsonl（含生效配置快照），供事后解释「那天为什么分少」。
+# 只保留最近这么多轮，超出时重写文件。
+RUN_HISTORY_KEEP = 500
+
 # 日志行固定格式：[时间] [账号] [LEVEL] 平台 [TAG] 正文
 LOG_LINE_RE = re.compile(
     r'^\[[^\]]*\]\s*\[[^\]]*\]\s*\[(?P<level>INFO|WARN|ERROR|DEBUG)\]\s*'
@@ -699,6 +703,74 @@ class MrsEngine:
             self._node_version_cache = None
         return self._node_version_cache
 
+    def _config_snapshot(self) -> Dict[str, Any]:
+        """本轮生效的关键配置子集。
+
+        ``run-state.json`` 每轮被覆盖，只存当前轮；历史轮次看 ``logs/run-history.jsonl``
+        （每轮结束时追加一行，含同一份快照）。这样「上周三为什么只做了三个阶段」
+        事后能查得到 —— 光靠日志是查不出来的，因为配置关闭的跳过根本不留日志。
+        """
+        try:
+            cfg = self.get_config()
+        except Exception:
+            return {}
+        workers = cfg.get('workers') or {}
+        humanize = cfg.get('humanize') or {}
+        return {
+            'workers': {key: bool(workers.get(key)) for key, _l, _t in cs.WORKER_FIELDS},
+            'humanize': bool(humanize.get('enabled')) if isinstance(humanize, dict) else bool(humanize),
+            'ensureStreakProtection': bool(cfg.get('ensureStreakProtection')),
+            'headless': bool(cfg.get('headless')),
+            'browserChannel': str(cfg.get('browserChannel') or ''),
+            'clusters': int(cfg.get('clusters') or 1),
+        }
+
+    def run_history(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """最近若干轮的结果 + 当轮生效配置（新的在前）。"""
+        path = os.path.join(self.log_dir, 'run-history.jsonl')
+        try:
+            with open(path, encoding='utf-8', errors='replace') as fh:
+                lines = fh.readlines()[-max(1, int(limit)) :]
+        except Exception:
+            return []
+        out: List[Dict[str, Any]] = []
+        for line in lines:
+            try:
+                out.append(json.loads(line))
+            except Exception:
+                continue
+        out.reverse()
+        return out
+
+    def _append_run_history(self, exit_code: Optional[int]) -> None:
+        """一轮结束：追加一行快照到 logs/run-history.jsonl（失败静默）。"""
+        try:
+            with self._lock:
+                snapshot = dict(self._progress)
+            entry = {
+                'at': _utc_now(),
+                'scope': snapshot.get('scope'),
+                'configSnapshot': snapshot.get('configSnapshot') or {},
+                'pointsGained': snapshot.get('pointsGained'),
+                'progress': snapshot.get('progress'),
+                'exitCode': exit_code,
+            }
+            os.makedirs(self.log_dir, exist_ok=True)
+            path = os.path.join(self.log_dir, 'run-history.jsonl')
+            with open(path, 'a', encoding='utf-8') as fh:
+                fh.write(json.dumps(entry, ensure_ascii=False) + '\n')
+            # 控制文件大小：超过保留轮数就只留最近这么多行
+            try:
+                with open(path, encoding='utf-8', errors='replace') as fh:
+                    lines = fh.readlines()
+                if len(lines) > RUN_HISTORY_KEEP:
+                    with open(path, 'w', encoding='utf-8') as fh:
+                        fh.writelines(lines[-RUN_HISTORY_KEEP:])
+            except Exception:
+                pass
+        except Exception:
+            pass
+
     def _snapshot(self, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         with self._lock:
             payload = dict(self._progress)
@@ -826,6 +898,9 @@ class MrsEngine:
                 'currentTask': None,
                 'pointsGained': 0,
                 'progress': {'done': 0, 'total': total},
+                # 本轮生效的配置子集：UI 事后解释「那天为什么少做几项」要靠它，
+                # 配置关闭的跳过在日志里一个字都没有。
+                'configSnapshot': self._config_snapshot(),
             }
         self._reset_log_sink()
 
@@ -1080,6 +1155,7 @@ class MrsEngine:
     def _on_exit(self, code: int) -> None:
         self._stop_heartbeat()
         self._close_log_sink()
+        self._append_run_history(code)
         self._write_state(
             {
                 'state': 'idle',
