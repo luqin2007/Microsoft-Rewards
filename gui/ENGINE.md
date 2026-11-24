@@ -307,3 +307,56 @@ synchronizeActiveBrowserCookies('TAG' [, true])
 3. **消息内容是什么**（「正在做某事」还是「发生了什么」）
 
 只看名字会错，这三个都要看。
+
+### 7.5 「今日无内容」的判定规则（三个配额型阶段）
+
+SEARCH / STREAK / CLAIM 在「没事可做」时都有 info 日志，但必须按关键词判，而且**有两处坑**。
+
+#### SEARCH —— 一行同时打印两端，不能只看「含 complete」
+
+`SearchManager.getSearchPoints()` 那行 `SEARCH-MANAGER` 是**两端拼在同一行**：
+
+```
+移动端: skip (complete, 60/60) | 桌面端: run (30/90, missing 60)
+```
+
+只判「消息含 `skip (complete,`」会**误判成今日无内容** —— 移动端满了，桌面端还有 60 点要刷。
+
+**正确判定**：消息**含 `skip (complete,` 且不含 `run (`**。
+
+| 两端形态 | 是否无内容 |
+|---|---|
+| `complete` + `complete` | 是 |
+| `complete` + `run (…)` | **否**（还要跑） |
+| `complete` + `disabled` | 是（那端本来就不做） |
+| `disabled` + `disabled` | 否（不含 complete，配置关闭由 `enabledByConfig` 那层管） |
+
+#### STREAK —— 「已启用」没有歧义，可以放心用
+
+`EnsureStreakProtection` 的三条 info：
+
+```
+连击保护已启用 | remainingDays=N              ← 仅当 before.isProtectionOn === true（本来就开着）
+没有剩余的保护天数 - 开关已禁用，跳过           ← 明确终态
+开始确保连击保护 | action=... | before=...    ← 开始跑，不是无内容
+完成 | streakProtectionEnabled=true | ...     ← 刚启用，是「做了事」
+```
+
+**「刚启用」走的是最后一条（`完成 | streakProtectionEnabled=true`），不是「已启用」** ——
+后者只在 `before.isProtectionOn === true` 的分支里打（`EnsureStreakProtection.ts:26-33`）。
+所以按「已启用」判无事可做是安全的，不需要配对 `remainingDays` 前后值。
+
+#### CLAIM —— 必须靠关键词
+
+同一个 TAG 下既有「开始领取奖励积分」也有「没有可领取的积分」，只看 TAG 出现会把两者混为一谈。
+
+#### 判定顺序（UI 侧）
+
+```
+1. enabledByConfig === false            → 今天不做（配置关闭）
+2. 阶段 TAG 在日志出现
+   2a. 消息命中上面的「无内容」规则      → 今日无内容
+   2b. 否则                             → 完成 / 进行中
+3. appDependent 且日志显示 App 不可用    → App 不可用
+4. 其余                                 → 还没到
+```
