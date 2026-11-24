@@ -116,7 +116,7 @@ STAGES: List[Dict[str, Any]] = [
         'configKeys': [],
         'tags': [
             'GET-DASHBOARD-DATA', 'GET-APP-DASHBOARD-DATA', 'GET-APP-EARNABLE-POINTS',
-            'GET-BROWSER-EARNABLE-POINTS', 'GET-CURRENT-POINTS', 'EARN-SNAPSHOT', 'POINTS',
+            'GET-BROWSER-EARNABLE-POINTS', 'GET-CURRENT-POINTS', 'POINTS',
             'REACT-PARSE', 'BUILD', 'BOOTSTRAP', 'REWARDS-PAGE', 'RELOAD-BAD-PAGE',
             'COOKIE-SYNC', 'CONTEXT-REFRESH', 'CONTEXT-REFRESH-COOKIE-SEED', 'GEO-LOCALE',
             'USERAGENT-CHROME-VERSION', 'USERAGENT-EDGE-VERSION', 'USER-AGENT-UPDATE',
@@ -227,6 +227,9 @@ BOUNDARY_TAGS = [
     'RUN-START', 'RUN-END',
     'MAIN-ERROR', 'UNCAUGHT-EXCEPTION', 'UNHANDLED-REJECTION',
     'PROCESS', 'CLEANUP', 'BOT-WARNING', 'EXPERIMENTAL',
+    # EARN-SNAPSHOT 三处调用全是 debug，内容是「获取失败/不在缓存/已重新获取」——
+    # 是事件不是动作，放进动作型会让阶段栏显示「正在 积分快照」，不通。
+    'EARN-SNAPSHOT',
     'CLUSTER-PRIMARY', 'CLUSTER-WORKER-START', 'CLUSTER-WORKER-TASK',
     'CLUSTER-WORKER-EXIT', 'CLUSTER-WORKER-ERROR', 'CLUSTER-WORKER-DISCONNECT',
 ]
@@ -726,20 +729,38 @@ class MrsEngine:
         }
 
     def run_history(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """最近若干轮的结果 + 当轮生效配置（新的在前）。"""
+        """最近若干轮的结果 + 当轮生效配置（新的在前）。
+
+        用 ``utf-8-sig`` 读：外部工具（PowerShell 5.1 的 ``Add-Content -Encoding UTF8``、
+        记事本）会在文件开头写 BOM，``utf-8`` 下首行 ``json.loads`` 必失败。
+        坏行**不再静默跳过** —— 那会让「文件读不出来」伪装成「还没有历史轮次」，
+        是最难排查的一种。
+        """
         path = os.path.join(self.log_dir, 'run-history.jsonl')
         try:
-            with open(path, encoding='utf-8', errors='replace') as fh:
+            with open(path, encoding='utf-8-sig', errors='replace') as fh:
                 lines = fh.readlines()[-max(1, int(limit)) :]
         except Exception:
             return []
         out: List[Dict[str, Any]] = []
+        bad = 0
         for line in lines:
-            try:
-                out.append(json.loads(line))
-            except Exception:
+            text = line.strip()
+            if not text:
                 continue
+            try:
+                out.append(json.loads(text))
+            except Exception:
+                bad += 1
         out.reverse()
+        if bad:
+            try:
+                print(
+                    f'[engine] {path} 有 {bad} 行无法解析，已跳过（该轮历史可能不完整）',
+                    file=sys.stderr,
+                )
+            except Exception:
+                pass
         return out
 
     def _append_run_history(self, exit_code: Optional[int]) -> None:
@@ -761,7 +782,7 @@ class MrsEngine:
                 fh.write(json.dumps(entry, ensure_ascii=False) + '\n')
             # 控制文件大小：超过保留轮数就只留最近这么多行
             try:
-                with open(path, encoding='utf-8', errors='replace') as fh:
+                with open(path, encoding='utf-8-sig', errors='replace') as fh:
                     lines = fh.readlines()
                 if len(lines) > RUN_HISTORY_KEEP:
                     with open(path, 'w', encoding='utf-8') as fh:
