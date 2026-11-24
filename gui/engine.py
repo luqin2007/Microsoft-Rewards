@@ -86,6 +86,7 @@ STAGES: List[Dict[str, Any]] = [
         'label': '创建会话',
         'order': 1,
         'optional': False,
+        'configKeys': [],
         'tags': ['FLOW', 'BROWSER', 'SESSION', 'BROWSER-FINGERPRINT', 'CLOSE-BROWSER', 'PRE-BROWSER-CLOSE'],
     },
     {
@@ -93,6 +94,7 @@ STAGES: List[Dict[str, Any]] = [
         'label': '登录',
         'order': 2,
         'optional': False,
+        'configKeys': [],
         'tags': [
             'LOGIN', 'LOGIN-BING', 'LOGIN-APP', 'LOGIN-TOTP', 'LOGIN-ENTER-EMAIL', 'LOGIN-ENTER-PASSWORD',
             'LOGIN-CHECKPOINT', 'DETECT-STATE', 'HANDLE-STATE', 'DISABLE-FIDO', 'GET-APP-TOKEN',
@@ -104,6 +106,7 @@ STAGES: List[Dict[str, Any]] = [
         'label': '读取仪表板',
         'order': 3,
         'optional': False,
+        'configKeys': [],
         'tags': [
             'GET-DASHBOARD-DATA', 'GET-APP-DASHBOARD-DATA', 'POINTS', 'REACT-PARSE', 'BUILD', 'BOOTSTRAP',
             'REWARDS-PAGE', 'RELOAD-BAD-PAGE', 'COOKIE-SYNC', 'CONTEXT-REFRESH',
@@ -111,19 +114,80 @@ STAGES: List[Dict[str, Any]] = [
             'DISMISS-ALL-MESSAGES', 'HUMANIZE',
         ],
     },
-    {'code': 'STREAK', 'label': '连击保护', 'order': 4, 'optional': True, 'tags': ['ENABLE-STREAK-PROTECTION']},
-    {'code': 'PUNCHCARD', 'label': '打卡卡片', 'order': 5, 'optional': True, 'tags': ['PUNCHCARD']},
-    {'code': 'SEARCH-PERK', 'label': '搜索特权', 'order': 6, 'optional': True, 'tags': ['ACTIVATE-SEARCH-PERK']},
-    {'code': 'DAILY-SET', 'label': '每日任务集', 'order': 7, 'optional': True, 'tags': ['DAILY-SET']},
-    {'code': 'MORE-PROMOTIONS', 'label': '更多推广', 'order': 8, 'optional': True, 'tags': ['MORE-PROMOTIONS']},
-    {'code': 'APP-CHECKIN', 'label': 'App 签到', 'order': 9, 'optional': True, 'tags': ['DAILY-CHECK-IN']},
-    {'code': 'APP-PROMOTIONS', 'label': 'App 推广', 'order': 10, 'optional': True, 'tags': ['APP-PROMOTIONS', 'APP-REWARD']},
-    {'code': 'READ-TO-EARN', 'label': '阅读赚积分', 'order': 11, 'optional': True, 'tags': ['READ-TO-EARN']},
+    {
+        'code': 'STREAK',
+        'label': '连击保护',
+        'order': 4,
+        'optional': True,
+        'configKeys': ['ensureStreakProtection'],
+        'tags': ['ENABLE-STREAK-PROTECTION'],
+    },
+    {
+        'code': 'PUNCHCARD',
+        'label': '打卡卡片',
+        'order': 5,
+        'optional': True,
+        'configKeys': ['workers.doPunchCards'],
+        'tags': ['PUNCHCARD'],
+    },
+    {
+        'code': 'SEARCH-PERK',
+        'label': '搜索特权',
+        'order': 6,
+        'optional': True,
+        'configKeys': ['workers.doActivateSearchPerk'],
+        'tags': ['ACTIVATE-SEARCH-PERK'],
+    },
+    {
+        'code': 'DAILY-SET',
+        'label': '每日任务集',
+        'order': 7,
+        'optional': True,
+        'configKeys': ['workers.doDailySet'],
+        'tags': ['DAILY-SET'],
+    },
+    {
+        'code': 'MORE-PROMOTIONS',
+        'label': '更多推广',
+        'order': 8,
+        'optional': True,
+        'configKeys': ['workers.doMorePromotions'],
+        'tags': ['MORE-PROMOTIONS'],
+    },
+    {
+        'code': 'APP-CHECKIN',
+        'label': 'App 签到',
+        'order': 9,
+        'optional': True,
+        'configKeys': ['workers.doDailyCheckIn'],
+        'appDependent': True,
+        'tags': ['DAILY-CHECK-IN'],
+    },
+    {
+        'code': 'APP-PROMOTIONS',
+        'label': 'App 推广',
+        'order': 10,
+        'optional': True,
+        'configKeys': ['workers.doAppPromotions'],
+        'appDependent': True,
+        'tags': ['APP-PROMOTIONS', 'APP-REWARD'],
+    },
+    {
+        'code': 'READ-TO-EARN',
+        'label': '阅读赚积分',
+        'order': 11,
+        'optional': True,
+        'configKeys': ['workers.doReadToEarn'],
+        'appDependent': True,
+        'tags': ['READ-TO-EARN'],
+    },
     {
         'code': 'SEARCH',
         'label': '搜索',
         'order': 12,
         'optional': True,
+        'configKeys': ['workers.doDesktopSearch', 'workers.doMobileSearch'],
+        'configMode': 'any',
         'tags': [
             'SEARCH-BING', 'SEARCH-MANAGER', 'SEARCH-CHINA-TRENDS', 'SEARCH-BING-RELATED',
             'SEARCH-BING-SUGGESTIONS', 'SEARCH-RANDOM-SCROLL', 'SEARCH-COOKIE-SEED',
@@ -136,9 +200,42 @@ STAGES: List[Dict[str, Any]] = [
         'label': '领取奖励积分',
         'order': 13,
         'optional': True,
+        'configKeys': ['workers.doClaimBonusPoints'],
         'tags': ['CLAIM-BONUS-POINTS', 'URL-REWARD', 'ACTIVITY'],
     },
 ]
+
+
+def _config_path(config: Dict[str, Any], dotted: str) -> Any:
+    """按 'workers.doReadToEarn' 这种点分路径取配置值。"""
+    cur: Any = config
+    for part in dotted.split('.'):
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(part)
+    return cur
+
+
+def _eval_stage_enabled(
+    config: Dict[str, Any], keys: List[str], mode: str
+) -> Tuple[bool, Optional[str]]:
+    """按配置判断该阶段本次会不会执行。
+
+    返回 (是否启用, 关掉的原因)。配置读不出来时**不判定**（当作启用），
+    否则 UI 会在配置读取失败时把所有阶段都标成「未启用」，比不显示更糟。
+    """
+    if not keys:
+        return True, None
+    if not config:
+        return True, None
+    values = [_config_path(config, key) for key in keys]
+    flags = [bool(value) for value in values]
+    enabled = any(flags) if mode == 'any' else all(flags)
+    if enabled:
+        return True, None
+    closed = [key for key, flag in zip(keys, flags) if not flag]
+    return False, '配置关闭：' + ', '.join(closed)
+
 
 # 这些 TAG 描述的是「账号/整轮边界」或异常，不属于上面任何一个业务阶段。
 BOUNDARY_TAGS = [
@@ -1049,18 +1146,40 @@ class MrsEngine:
         只读元数据。UI 用它渲染「阶段」栏：未跑到的阶段显示灰色，
         这样用户一眼能看到总共几步、现在第几步。
 
-        为什么不让 UI 从日志推断：日志推断出来的顺序是「出现顺序」，
-        同一个 TAG 反复出现会变成多个条目，而且没跑到的阶段根本不会出现。
+        每条额外给出两个字段，让 UI 能区分「还没到」和「这次不会做」：
 
-        返回结构：
-          stages       有序阶段数组，每项 code/label/order/optional/tags
-          boundaryTags 不属于任何阶段的边界/异常 TAG（账号起止、整轮起止、异常）
+        * ``enabledByConfig`` —— 按当前 config.json 的开关判断本阶段会不会执行。
+          `False` 就是「今天不做」，UI 可以划掉或淡黄显示，而不是和「还没到」一样灰着。
+        * ``disabledReason`` —— 关掉的原因（例如 `配置关闭：workers.doReadToEarn`）。
+        * ``appDependent`` —— 该阶段依赖 App accessToken；即便配置开着，
+          账号拿不到 token 时也会在运行时整组跳过（引擎会在日志里打 `APP-TASKS` 说明）。
         """
+        config: Dict[str, Any] = {}
+        try:
+            config = self.get_config()
+        except Exception:
+            config = {}
+
+        out: List[Dict[str, Any]] = []
+        for stage in STAGES:
+            item = dict(stage)
+            keys = list(item.get('configKeys') or [])
+            mode = str(item.get('configMode') or 'all')
+            app_dep = bool(item.get('appDependent'))
+            enabled, reason = _eval_stage_enabled(config, keys, mode)
+            item['enabledByConfig'] = enabled
+            if reason:
+                item['disabledReason'] = reason
+            if app_dep:
+                item['appDependent'] = True
+            out.append(item)
+
         return {
-            'stages': [dict(stage) for stage in STAGES],
+            'stages': out,
             'boundaryTags': list(BOUNDARY_TAGS),
             'note': (
-                '顺序取自 src/index.ts 的 Main()；optional=true 表示该阶段受配置开关或账号状态控制'
-                '（如 doReadToEarn 关闭、或无 accessToken 时 App 类任务整组跳过）'
+                '顺序取自 src/index.ts 的 Main()。optional=true 表示该阶段受配置开关或账号状态控制；'
+                'enabledByConfig=false 表示按当前配置这次根本不会执行（disabledReason 给原因）；'
+                'appDependent=true 表示还依赖 App accessToken，运行时可能被整组跳过'
             ),
         }
