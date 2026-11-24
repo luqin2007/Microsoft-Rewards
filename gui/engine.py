@@ -87,7 +87,10 @@ STAGES: List[Dict[str, Any]] = [
         'order': 1,
         'optional': False,
         'configKeys': [],
-        'tags': ['FLOW', 'BROWSER', 'SESSION', 'BROWSER-FINGERPRINT', 'CLOSE-BROWSER', 'PRE-BROWSER-CLOSE'],
+        'tags': [
+            'FLOW', 'BROWSER', 'SESSION', 'BROWSER-FINGERPRINT', 'BROWSER-SECURITY',
+            'CLOSE-BROWSER', 'PRE-BROWSER-CLOSE', 'GET-NEW-TAB',
+        ],
     },
     {
         'code': 'LOGIN',
@@ -96,9 +99,9 @@ STAGES: List[Dict[str, Any]] = [
         'optional': False,
         'configKeys': [],
         'tags': [
-            'LOGIN', 'LOGIN-BING', 'LOGIN-APP', 'LOGIN-TOTP', 'LOGIN-ENTER-EMAIL', 'LOGIN-ENTER-PASSWORD',
-            'LOGIN-CHECKPOINT', 'DETECT-STATE', 'HANDLE-STATE', 'DISABLE-FIDO', 'GET-APP-TOKEN',
-            'GET-REWARD-SESSION',
+            'LOGIN', 'LOGIN-BING', 'LOGIN-APP', 'LOGIN-TOTP', 'LOGIN-CODE', 'LOGIN-ENTER-EMAIL',
+            'LOGIN-ENTER-PASSWORD', 'LOGIN-PASSWORDLESS', 'LOGIN-RECOVERY', 'LOGIN-CHECKPOINT',
+            'DETECT-STATE', 'HANDLE-STATE', 'DISABLE-FIDO', 'GET-APP-TOKEN', 'GET-REWARD-SESSION',
         ],
     },
     {
@@ -108,9 +111,11 @@ STAGES: List[Dict[str, Any]] = [
         'optional': False,
         'configKeys': [],
         'tags': [
-            'GET-DASHBOARD-DATA', 'GET-APP-DASHBOARD-DATA', 'POINTS', 'REACT-PARSE', 'BUILD', 'BOOTSTRAP',
-            'REWARDS-PAGE', 'RELOAD-BAD-PAGE', 'COOKIE-SYNC', 'CONTEXT-REFRESH',
-            'CONTEXT-REFRESH-COOKIE-SEED', 'GET-CURRENT-POINTS', 'USERAGENT-EDGE-VERSION',
+            'GET-DASHBOARD-DATA', 'GET-APP-DASHBOARD-DATA', 'GET-APP-EARNABLE-POINTS',
+            'GET-BROWSER-EARNABLE-POINTS', 'GET-CURRENT-POINTS', 'EARN-SNAPSHOT', 'POINTS',
+            'REACT-PARSE', 'BUILD', 'BOOTSTRAP', 'REWARDS-PAGE', 'RELOAD-BAD-PAGE',
+            'COOKIE-SYNC', 'CONTEXT-REFRESH', 'CONTEXT-REFRESH-COOKIE-SEED', 'GEO-LOCALE',
+            'USERAGENT-CHROME-VERSION', 'USERAGENT-EDGE-VERSION', 'USER-AGENT-UPDATE',
             'DISMISS-ALL-MESSAGES', 'HUMANIZE',
         ],
     },
@@ -189,10 +194,14 @@ STAGES: List[Dict[str, Any]] = [
         'configKeys': ['workers.doDesktopSearch', 'workers.doMobileSearch'],
         'configMode': 'any',
         'tags': [
-            'SEARCH-BING', 'SEARCH-MANAGER', 'SEARCH-CHINA-TRENDS', 'SEARCH-BING-RELATED',
-            'SEARCH-BING-SUGGESTIONS', 'SEARCH-RANDOM-SCROLL', 'SEARCH-COOKIE-SEED',
-            'SEARCH-COOKIE-CAPTURE', 'SEARCH-CLOSE-TABS', 'QUERY-QUEUE', 'QUERY-CLUSTER',
-            'QUERY-MANAGER', 'GHOST-CLICK',
+            'SEARCH-BING', 'SEARCH-BING-RELATED', 'SEARCH-BING-SUGGESTIONS', 'SEARCH-CHINA-TRENDS',
+            'SEARCH-CLOSE-TABS', 'SEARCH-COOKIE-SEED', 'SEARCH-COOKIE-CAPTURE', 'SEARCH-GOOGLE-TRENDS',
+            'SEARCH-HACKERNEWS', 'SEARCH-LOCAL-QUERY-LIST', 'SEARCH-MANAGER', 'SEARCH-ON-BING',
+            'SEARCH-ON-BING-ACTIVATE', 'SEARCH-ON-BING-QUERY', 'SEARCH-ON-BING-SEARCH',
+            'SEARCH-RANDOM-CLICK', 'SEARCH-RANDOM-SCROLL', 'SEARCH-REDDIT', 'SEARCH-REPORT',
+            'SEARCH-RSS', 'SEARCH-WIKIPEDIA-RANDOM', 'SEARCH-WIKIPEDIA-TRENDING',
+            'QUERY-CLUSTER', 'QUERY-MANAGER', 'QUERY-QUEUE', 'GHOST-CLICK',
+            'VISUAL-SEARCH', 'VISUAL-SEARCH-BCID', 'VISUAL-SEARCH-REPORT', 'EDGE-BROWSING',
         ],
     },
     {
@@ -201,9 +210,28 @@ STAGES: List[Dict[str, Any]] = [
         'order': 13,
         'optional': True,
         'configKeys': ['workers.doClaimBonusPoints'],
-        'tags': ['CLAIM-BONUS-POINTS', 'URL-REWARD', 'ACTIVITY'],
+        'tags': ['CLAIM-BONUS-POINTS', 'CLAIM-REWARD', 'URL-REWARD', 'ACTIVITY'],
     },
 ]
+
+# 不属于任何业务阶段的 TAG：账号/整轮边界、集群/进程、异常、实验性开关。
+# 注意 ACCOUNT-ERROR / CLUSTER-WORKER-ERROR / UNCAUGHT-EXCEPTION / UNHANDLED-REJECTION
+# 平时**不会出现在日志里**（没出事就没有），但一旦出现，UI 必须查得到中文名 ——
+# 异常路径恰恰是最需要看清的时候。
+BOUNDARY_TAGS = [
+    'ACCOUNT-START', 'ACCOUNT-END', 'ACCOUNT-PARTIAL', 'ACCOUNT-DELAY', 'ACCOUNT-SKIP', 'ACCOUNT-ERROR',
+    'RUN-START', 'RUN-END',
+    'MAIN-ERROR', 'UNCAUGHT-EXCEPTION', 'UNHANDLED-REJECTION',
+    'PROCESS', 'CLEANUP', 'BOT-WARNING', 'EXPERIMENTAL',
+    'CLUSTER-PRIMARY', 'CLUSTER-WORKER-START', 'CLUSTER-WORKER-TASK',
+    'CLUSTER-WORKER-EXIT', 'CLUSTER-WORKER-ERROR', 'CLUSTER-WORKER-DISCONNECT',
+]
+
+# 「跳过」标记：这两个 TAG 本身不表示阶段，而是「某些阶段这次不做」的信号。
+# UI 需要看消息内容再决定标哪些阶段跳过：
+#   APP-TASKS  消息含「跳过」→ APP-CHECKIN / APP-PROMOTIONS / READ-TO-EARN 三段跳过
+#   RUN-SKIP   → 整轮跳过（humanize.skipWhenCompletedToday）
+SKIP_TAGS = ['APP-TASKS', 'RUN-SKIP']
 
 
 def _config_path(config: Dict[str, Any], dotted: str) -> Any:
@@ -235,13 +263,6 @@ def _eval_stage_enabled(
         return True, None
     closed = [key for key, flag in zip(keys, flags) if not flag]
     return False, '配置关闭：' + ', '.join(closed)
-
-
-# 这些 TAG 描述的是「账号/整轮边界」或异常，不属于上面任何一个业务阶段。
-BOUNDARY_TAGS = [
-    'ACCOUNT-START', 'ACCOUNT-END', 'ACCOUNT-PARTIAL', 'ACCOUNT-DELAY',
-    'EARN-SNAPSHOT', 'RUN-START', 'RUN-END', 'MAIN-ERROR',
-]
 
 
 def _utc_now() -> str:
@@ -1177,9 +1198,12 @@ class MrsEngine:
         return {
             'stages': out,
             'boundaryTags': list(BOUNDARY_TAGS),
+            'skipTags': list(SKIP_TAGS),
             'note': (
                 '顺序取自 src/index.ts 的 Main()。optional=true 表示该阶段受配置开关或账号状态控制；'
                 'enabledByConfig=false 表示按当前配置这次根本不会执行（disabledReason 给原因）；'
-                'appDependent=true 表示还依赖 App accessToken，运行时可能被整组跳过'
+                'appDependent=true 表示还依赖 App accessToken，运行时可能被整组跳过。'
+                'skipTags 是「跳过」信号 TAG：APP-TASKS 消息含「跳过」时对应 APP-CHECKIN/APP-PROMOTIONS/'
+                'READ-TO-EARN 三段跳过、RUN-SKIP 表示整轮跳过'
             ),
         }
